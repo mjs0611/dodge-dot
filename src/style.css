@@ -1,0 +1,139 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700;900&display=swap');
+
+:root { --game-color: #000; }
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+  width: 100%; height: 100%;
+  background:
+    linear-gradient(rgba(0,0,0,0.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,0,0,0.015) 1px, transparent 1px);
+  background-size: 80px 80px;
+  background-color: #fff;
+  overflow: hidden;
+}
+body { font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif; }
+
+#gameCanvas { position: fixed; top: 0; left: 0; touch-action: none; }
+
+/* ── Intro ── */
+#intro {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  pointer-events: none; z-index: 10;
+  transition: opacity 0.2s;
+}
+#intro.hidden { opacity: 0; pointer-events: none; }
+#gameTitle {
+  font-size: clamp(44px, 11vw, 72px);
+  font-weight: 900; letter-spacing: -4px; color: #000; margin-bottom: 6px;
+}
+#gameSub { font-size: 10px; letter-spacing: 5px; color: #bbb; margin-bottom: 64px; text-transform: uppercase; }
+#startBtn {
+  pointer-events: all;
+  background: #000; color: #fff; border: none;
+  padding: 18px 60px; font-size: 13px;
+  font-weight: 700; letter-spacing: 3px;
+  border-radius: 0; cursor: pointer;
+  font-family: inherit;
+  transition: transform 0.1s;
+}
+#startBtn:active { transform: scale(0.95); }
+
+/* ── Score ── */
+#score {
+  position: fixed;
+  top: max(24px, env(safe-area-inset-top, 24px));
+  left: 0; width: 100%;
+  text-align: center;
+  font-size: 14px; font-weight: 900; letter-spacing: 2px;
+  color: rgba(0,0,0,0.15);
+  z-index: 10; display: none;
+  text-transform: uppercase;
+}
+
+/* ── Game Over ── */
+#gameOver {
+  position: fixed; top: 0; left: 0;
+  width: 100%; height: 100%;
+  background: rgba(255,255,255,0.97);
+  display: none; flex-direction: column;
+  align-items: center; justify-content: center;
+  z-index: 20;
+}
+#gameOver.show { display: flex; }
+#goLabel { font-size: 10px; letter-spacing: 5px; color: #bbb; margin-bottom: 20px; text-transform: uppercase; }
+#goScore {
+  font-size: clamp(88px, 24vw, 140px);
+  font-weight: 900; letter-spacing: -6px; color: #000;
+  line-height: 1; margin-bottom: 4px;
+}
+#goUnit { font-size: 11px; letter-spacing: 4px; color: #ccc; margin-bottom: 60px; text-transform: uppercase; }
+.goBtn {
+  width: 230px; padding: 17px; margin: 5px;
+  border-radius: 0; font-size: 13px;
+  font-weight: 700; letter-spacing: 1px;
+  cursor: pointer; border: none;
+  font-family: inherit;
+  transition: transform 0.1s;
+}
+.goBtn:active { transform: scale(0.96); }
+.goBtn.primary { background: #000; color: #fff; }
+.goBtn.secondary { background: #fff; color: #000; border: 2px solid #000; }
+#leaderboardBtn { display: none; }
+
+/* ── Wave pulse (전체 화면) ── */
+#dirPulse {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  pointer-events: none; z-index: 5;
+  border: 0px solid var(--game-color);
+  opacity: 0;
+  box-sizing: border-box;
+}
+#dirPulse.pulse {
+  animation: dirPulse 0.55s ease-out forwards;
+}
+@keyframes dirPulse {
+  0%   { border-width: 6px; opacity: 0.55; }
+  60%  { border-width: 3px; opacity: 0.2; }
+  100% { border-width: 0px; opacity: 0; }
+}
+
+/* ── Close confirm ── */
+#closeConfirm {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(0,0,0,0.5);
+  display: none; align-items: center; justify-content: center;
+  z-index: 50;
+}
+#closeConfirm.show { display: flex; }
+#closeBox {
+  background: #fff; padding: 40px 32px; min-width: 280px;
+  display: flex; flex-direction: column; align-items: center; gap: 24px;
+}
+#closeMsg { font-size: 14px; font-weight: 900; color: #000; letter-spacing: 2px; text-transform: uppercase; }
+.closeBtns { display: flex; gap: 10px; width: 100%; }
+#closeNo, #closeYes {
+  flex: 1; padding: 16px; border: none; font-family: inherit;
+  font-size: 12px; font-weight: 700; letter-spacing: 1px; cursor: pointer;
+}
+#closeNo { background: #f3f3f3; color: #000; }
+#closeYes { background: #000; color: #fff; }
+
+/* ── Ad fallback ── */
+#adScreen {
+  position: fixed; top: 0; left: 0;
+  width: 100%; height: 100%; background: #fff;
+  display: none; flex-direction: column;
+  align-items: center; justify-content: center;
+  z-index: 30;
+}
+#adScreen.show { display: flex; }
+#adTag { font-size: 10px; font-weight: 900; letter-spacing: 4px; color: #eee; margin-bottom: 24px; text-transform: uppercase; }
+#adBox {
+  width: min(300px, 80vw); height: 220px;
+  background: #fafafa; border: 1px solid #f0f0f0;
+  display: flex; align-items: center; justify-content: center; margin-bottom: 24px;
+}
+#adCount { font-size: 80px; font-weight: 900; color: #f0f0f0; }
+#adSub { font-size: 10px; font-weight: 700; color: #ccc; letter-spacing: 2px; text-transform: uppercase; }
