@@ -1,6 +1,5 @@
 // ── AIT (리더보드 + 전면광고, 토스 앱 환경에서만 동작) ──────────────────────────────
-const AIT_AD_GROUP_ID = 'ait.v2.live.PLACEHOLDER_DODGE_DOT';
-// TODO: 앱인토스 콘솔에서 dodge-dot 앱 등록 후 실제 ID로 교체
+const AIT_AD_GROUP_ID = 'ait.v2.live.a66b039476b04755';
 
 type AitModule = {
   submitGameCenterLeaderBoardScore: typeof import('@apps-in-toss/web-framework').submitGameCenterLeaderBoardScore;
@@ -13,12 +12,6 @@ type AitModule = {
 let ait: AitModule | null = null;
 let aitAdLoaded = false;
 
-// ── 유저 식별자 ───────────────────────────────────────────────────────────────
-let userHash: string | null = localStorage.getItem('userHash');
-
-function getRetriesKey()     { return `freeRetries_${userHash ?? 'guest'}`; }
-function getRetriesDateKey() { return `freeRetriesDate_${userHash ?? 'guest'}`; }
-
 import('@apps-in-toss/web-framework').then((m) => {
   ait = {
     submitGameCenterLeaderBoardScore: m.submitGameCenterLeaderBoardScore,
@@ -30,14 +23,6 @@ import('@apps-in-toss/web-framework').then((m) => {
   };
   document.getElementById('leaderboardBtn')!.style.display = 'block';
   preloadAitAd();
-  m.getUserKeyForGame().then((result) => {
-    if (result && result !== 'INVALID_CATEGORY' && result !== 'ERROR' && result.type === 'HASH') {
-      userHash = result.hash;
-      localStorage.setItem('userHash', result.hash);
-      freeRetries = loadFreeRetries();
-      updateRetryBtn();
-    }
-  }).catch(() => {});
 }).catch(() => {});
 
 function preloadAitAd() {
@@ -51,15 +36,15 @@ function preloadAitAd() {
 }
 
 // ── AdMob ────────────────────────────────────────────────────────────────────
-const ADMOB_INTERSTITIAL_ID = 'ca-app-pub-PLACEHOLDER/PLACEHOLDER';
-// TODO: 원스토어 빌드 후 AdMob 앱 등록하고 ID 교체
+const ADMOB_REWARD_ID = 'ca-app-pub-4557219410513767/7207079398';
+// TODO: 원스토어 빌드 후 AdMob 앱 등록하고 리워드 광고 ID 교체
 type AdMobType = typeof import('@capacitor-community/admob').AdMob;
-type InterstitialEventsType = typeof import('@capacitor-community/admob').InterstitialAdPluginEvents;
+type RewardEventsType = typeof import('@capacitor-community/admob').RewardAdPluginEvents;
 let AdMobPlugin: AdMobType | null = null;
-let InterstitialEvents: InterstitialEventsType | null = null;
+let RewardEvents: RewardEventsType | null = null;
 import('@capacitor-community/admob').then((m) => {
   AdMobPlugin = m.AdMob;
-  InterstitialEvents = m.InterstitialAdPluginEvents;
+  RewardEvents = m.RewardAdPluginEvents;
   AdMobPlugin.initialize({}).then(() => preloadAd()).catch(() => {});
 }).catch(() => {});
 
@@ -103,21 +88,34 @@ const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
 const rand    = (a: number, b: number) => a + Math.random() * (b - a);
 const clamp   = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 
-// ── Obstacles (dot only, 4방향 랜덤) ─────────────────────────────────────────
-type DotObs = { x: number; y: number; r: number; vx: number; vy: number };
+// ── Obstacles ────────────────────────────────────────────────────────────────
+type Shape = 'circle' | 'square' | 'triangle' | 'diamond';
+const SHAPES: Shape[] = ['circle', 'square', 'triangle', 'diamond', 'circle', 'square', 'triangle'];
+let currentShape: Shape = 'circle';
+
+type DotObs = { x: number; y: number; r: number; vx: number; vy: number; spin: number; shape: Shape };
 let obstacles: DotObs[] = [];
+
+// 화면 경계 위의 각도 angle 지점 좌표
+function perimeterPoint(angle: number): [number, number] {
+  const cx = W / 2, cy = H / 2;
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const tx = cos !== 0 ? (cos > 0 ? (W - cx) : -cx) / cos : Infinity;
+  const ty = sin !== 0 ? (sin > 0 ? (H - cy) : -cy) / sin : Infinity;
+  const t = Math.min(Math.abs(tx), Math.abs(ty));
+  return [cx + cos * t, cy + sin * t];
+}
 
 function makeObs(fullH: boolean): DotObs {
   const pad  = 35;
-  const diff = fullH ? 0 : Math.min(score / 20, 4);
-  const earlyEase = score < 10 ? 0.8 : 1.0;
-  const graceMult = 1 - waveGrace * 0.35; // wave 직후 최대 35% 속도 감소
+  const diff = fullH ? 0 : Math.min(score / 15, 4); // 난이도 가속 (20→15)
+  const graceMult = 1 - waveGrace * 0.35;
   const baseSpd = rand(
-    (3.5 + diff * 2.0) * earlyEase * graceMult,
-    (6.0 + diff * 2.0) * earlyEase * graceMult,
+    (5.5 + diff * 2.2) * graceMult, // 초반 속도 대폭 상향
+    (8.0 + diff * 2.2) * graceMult,
   );
 
-  // 크기 티어: 작은 dot은 빠르게, 큰 dot은 느리게
+  // 크기 티어
   const roll = Math.random();
   let r: number, spdMult: number;
   if      (roll < 0.35) { r = rand(4, 8);   spdMult = 1.25; }
@@ -126,49 +124,123 @@ function makeObs(fullH: boolean): DotObs {
   else                  { r = rand(27, 40); spdMult = 0.55; }
   const spd = baseSpd * spdMult;
 
-  // 드리프트(수직방향 속도 비율): 난이도에 따라 증가 → 대각선 탄환 등장
+  // 스핀(커브): diff > 1.5부터 낮은 확률로 적용
+  const spin = diff > 1.5 && Math.random() < 0.2
+    ? (Math.random() < 0.5 ? 1 : -1) * rand(0.018, 0.038)
+    : 0;
+
   const drift = Math.min(0.7, 0.1 + diff * 0.15);
 
   if (fullH) {
-    // 인트로 데모: 좌우에서만 수평 직선
     const y = rand(pad, H - pad);
-    if (Math.random() < 0.5) return { x: -r - 10, y, r, vx:  spd, vy: 0 };
-    else                     return { x: W + r + 10, y, r, vx: -spd, vy: 0 };
+    if (Math.random() < 0.5) return { x: -r - 10, y, r, vx:  spd, vy: 0, spin: 0, shape: 'circle' };
+    else                     return { x: W + r + 10, y, r, vx: -spd, vy: 0, spin: 0, shape: 'circle' };
   }
 
-  // 플레이 중: 4방향 랜덤
-  const side = Math.floor(Math.random() * 4);
-
-  // aimed dot: diff > 2에서 18% 확률로 플레이어 방향 조준
-  const aimed = diff > 2 && Math.random() < 0.18;
+  // 8방향: 4면 + 4코너 (diff > 0.3부터 코너 등장 — 이전보다 빠르게)
+  const useCorner = diff > 0.3 && Math.random() < 0.28;
+  const aimed     = diff > 1.5 && Math.random() < 0.18; // aimed 더 일찍 등장
 
   let x = 0, y = 0, vx = 0, vy = 0;
-  if (side === 0) {
-    // 왼쪽 → 오른쪽
-    x = -r - 10; y = rand(pad, H - pad);
-    if (aimed) { const a = Math.atan2(player.y - y, player.x - x); vx = Math.cos(a) * spd; vy = Math.sin(a) * spd; }
-    else       { vx = spd; vy = rand(-drift, drift) * spd; }
-  } else if (side === 1) {
-    // 오른쪽 → 왼쪽
-    x = W + r + 10; y = rand(pad, H - pad);
-    if (aimed) { const a = Math.atan2(player.y - y, player.x - x); vx = Math.cos(a) * spd; vy = Math.sin(a) * spd; }
-    else       { vx = -spd; vy = rand(-drift, drift) * spd; }
-  } else if (side === 2) {
-    // 위 → 아래
-    x = rand(pad, W - pad); y = -r - 10;
-    if (aimed) { const a = Math.atan2(player.y - y, player.x - x); vx = Math.cos(a) * spd; vy = Math.sin(a) * spd; }
-    else       { vx = rand(-drift, drift) * spd; vy = spd; }
+
+  if (useCorner) {
+    // 코너에서 대각선으로 진입
+    const corner = Math.floor(Math.random() * 4);
+    const cx = corner % 2 === 0 ? -r - 10 : W + r + 10;
+    const cy = corner < 2      ? -r - 10  : H + r + 10;
+    x = cx; y = cy;
+    if (aimed) {
+      const a = Math.atan2(player.y - y, player.x - x);
+      vx = Math.cos(a) * spd; vy = Math.sin(a) * spd;
+    } else {
+      const baseA = Math.atan2(H / 2 - cy, W / 2 - cx);
+      const a = baseA + rand(-0.4, 0.4);
+      vx = Math.cos(a) * spd; vy = Math.sin(a) * spd;
+    }
   } else {
-    // 아래 → 위
-    x = rand(pad, W - pad); y = H + r + 10;
-    if (aimed) { const a = Math.atan2(player.y - y, player.x - x); vx = Math.cos(a) * spd; vy = Math.sin(a) * spd; }
-    else       { vx = rand(-drift, drift) * spd; vy = -spd; }
+    const side = Math.floor(Math.random() * 4);
+    if (side === 0) {
+      x = -r - 10; y = rand(pad, H - pad);
+      if (aimed) { const a = Math.atan2(player.y - y, player.x - x); vx = Math.cos(a) * spd; vy = Math.sin(a) * spd; }
+      else       { vx = spd; vy = rand(-drift, drift) * spd; }
+    } else if (side === 1) {
+      x = W + r + 10; y = rand(pad, H - pad);
+      if (aimed) { const a = Math.atan2(player.y - y, player.x - x); vx = Math.cos(a) * spd; vy = Math.sin(a) * spd; }
+      else       { vx = -spd; vy = rand(-drift, drift) * spd; }
+    } else if (side === 2) {
+      x = rand(pad, W - pad); y = -r - 10;
+      if (aimed) { const a = Math.atan2(player.y - y, player.x - x); vx = Math.cos(a) * spd; vy = Math.sin(a) * spd; }
+      else       { vx = rand(-drift, drift) * spd; vy = spd; }
+    } else {
+      x = rand(pad, W - pad); y = H + r + 10;
+      if (aimed) { const a = Math.atan2(player.y - y, player.x - x); vx = Math.cos(a) * spd; vy = Math.sin(a) * spd; }
+      else       { vx = rand(-drift, drift) * spd; vy = -spd; }
+    }
   }
-  return { x, y, r, vx, vy };
+  return { x, y, r, vx, vy, spin, shape: currentShape };
+}
+
+// ── Pattern Spawner (나선개비 / 부채꼴) ──────────────────────────────────────
+let patternTimer = 0;
+
+function spawnPinwheel(diff: number) {
+  // 나선개비: 사방 경계에서 중앙을 향해 회전하며 수렴
+  const arms    = Math.floor(rand(5, 8));
+  const spd     = (3.5 + diff) * 0.8;
+  const r       = rand(5, 13);
+  const base    = Math.random() * Math.PI * 2;
+  const spread  = 0.18; // 조준 흔들림
+
+  for (let i = 0; i < arms; i++) {
+    setTimeout(() => {
+      if (state !== S.PLAY) return;
+      const angle = base + (i / arms) * Math.PI * 2;
+      const [px, py] = perimeterPoint(angle);
+      const toCenter  = Math.atan2(H / 2 - py, W / 2 - px);
+      const shotAngle = toCenter + rand(-spread, spread);
+      // 약간의 스핀으로 나선감 부여
+      const spin = (Math.random() < 0.5 ? 1 : -1) * rand(0.01, 0.025);
+      obstacles.push({ x: px, y: py, r, vx: Math.cos(shotAngle) * spd, vy: Math.sin(shotAngle) * spd, spin, shape: currentShape });
+    }, i * 110);
+  }
+}
+
+function spawnFan(diff: number) {
+  // 부채꼴: 한 지점에서 扇형으로 퍼지는 산탄
+  const count = Math.floor(rand(5, 8));
+  const spd   = (4 + diff) * 0.85;
+  const r     = rand(5, 14);
+  const fanAngle = Math.PI / 2.5; // ~72°
+  const side  = Math.floor(Math.random() * 4);
+  let x: number, y: number, baseA: number;
+  if      (side === 0) { x = rand(W * 0.2, W * 0.8); y = -20;    baseA =  Math.PI / 2; }
+  else if (side === 1) { x = W + 20;                  y = rand(H * 0.2, H * 0.8); baseA = Math.PI; }
+  else if (side === 2) { x = rand(W * 0.2, W * 0.8); y = H + 20; baseA = -Math.PI / 2; }
+  else                 { x = -20;                     y = rand(H * 0.2, H * 0.8); baseA = 0; }
+
+  for (let i = 0; i < count; i++) {
+    const a    = baseA + (i / (count - 1) - 0.5) * fanAngle;
+    const spin = (Math.random() < 0.5 ? 1 : -1) * rand(0, 0.02);
+    obstacles.push({ x, y, r, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, spin, shape: currentShape });
+  }
+}
+
+function triggerPattern() {
+  const diff = Math.min(score / 20, 4);
+  if (Math.random() < 0.55) spawnPinwheel(diff);
+  else                      spawnFan(diff);
 }
 
 function updateObs() {
-  for (const o of obstacles) { o.x += o.vx; o.y += o.vy; }
+  for (const o of obstacles) {
+    if (o.spin !== 0) {
+      const spd = Math.hypot(o.vx, o.vy);
+      const ang = Math.atan2(o.vy, o.vx) + o.spin;
+      o.vx = Math.cos(ang) * spd;
+      o.vy = Math.sin(ang) * spd;
+    }
+    o.x += o.vx; o.y += o.vy;
+  }
   obstacles = obstacles.filter(o =>
     o.x > -200 && o.x < W + 200 && o.y > -200 && o.y < H + 200,
   );
@@ -177,7 +249,35 @@ function updateObs() {
 function drawObs() {
   ctx.fillStyle = gameColor;
   for (const o of obstacles) {
-    ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath();
+    switch (o.shape) {
+      case 'circle':
+        ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2);
+        break;
+      case 'square': {
+        const s = o.r * 1.5;
+        ctx.rect(o.x - s, o.y - s, s * 2, s * 2);
+        break;
+      }
+      case 'triangle': {
+        const h = o.r * 1.6;
+        ctx.moveTo(o.x,          o.y - h);
+        ctx.lineTo(o.x + h * 0.866, o.y + h * 0.5);
+        ctx.lineTo(o.x - h * 0.866, o.y + h * 0.5);
+        ctx.closePath();
+        break;
+      }
+      case 'diamond': {
+        const d = o.r * 1.5;
+        ctx.moveTo(o.x,     o.y - d);
+        ctx.lineTo(o.x + d, o.y);
+        ctx.lineTo(o.x,     o.y + d);
+        ctx.lineTo(o.x - d, o.y);
+        ctx.closePath();
+        break;
+      }
+    }
+    ctx.fill();
   }
 }
 
@@ -209,9 +309,10 @@ function triggerWave() {
   obstacles = []; // 기존 장애물 클리어
   waveGrace = 1.0; // 3초 난이도 완화 시작
   waveHintAlpha = 1;
-  // 색상 전환
+  // 색상 + 모양 전환
   colorIdx = (colorIdx + 1) % COLORS.length;
   gameColor = COLORS[colorIdx];
+  currentShape = SHAPES[colorIdx];
   applyColor();
   ait?.generateHapticFeedback({ type: 'wiggle' });
   const pulseEl = document.getElementById('dirPulse')!;
@@ -291,29 +392,80 @@ function drawParticles() {
 }
 
 // ── Score (생존 시간, 초) ──────────────────────────────────────────────────────
+// ── Invincibility (이어하기 후) ────────────────────────────────────────────────
+let invincibleT = 0;
+
+// ── Best Score ────────────────────────────────────────────────────────────────
+const BEST_KEY = 'dd_bestScore';
+function loadBest(): number { return parseInt(localStorage.getItem(BEST_KEY) ?? '0', 10); }
+function saveBest(n: number) { localStorage.setItem(BEST_KEY, String(n)); }
+
+// ── Milestone Toast ───────────────────────────────────────────────────────────
+const MILESTONES = [10, 20, 30, 60, 120, 180];
+let milestoneIdx = 0;
+let toast: { text: string; alpha: number; y: number } | null = null;
+
+function updateToast(dt: number) {
+  if (!toast) return;
+  toast.alpha = Math.max(0, toast.alpha - dt * 0.9);
+  toast.y -= dt * 28;
+  if (toast.alpha <= 0) toast = null;
+}
+
+function drawToast() {
+  if (!toast) return;
+  ctx.save();
+  ctx.globalAlpha = toast.alpha * toast.alpha;
+  ctx.fillStyle = gameColor;
+  ctx.font = `900 ${Math.floor(Math.min(W, H) * 0.13)}px "Space Grotesk", sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(toast.text, W / 2, toast.y);
+  ctx.restore();
+}
+
+// ── Score ──────────────────────────────────────────────────────────────────────
 let score = 0, scoreF = 0;
 const scoreEl = document.getElementById('score')!;
 function tickScore(dt: number) {
   scoreF += dt;
+  const prev = score;
   score = Math.floor(scoreF);
   scoreEl.textContent = score + 's';
+
+  while (milestoneIdx < MILESTONES.length && score >= MILESTONES[milestoneIdx]) {
+    if (prev < MILESTONES[milestoneIdx]) {
+      toast = { text: MILESTONES[milestoneIdx] + 's !', alpha: 1, y: H * 0.38 };
+      ait?.generateHapticFeedback({ type: 'confetti' }).catch(() => {});
+    }
+    milestoneIdx++;
+  }
 }
 
 // ── Obstacle Spawner ──────────────────────────────────────────────────────────
 let obsTimer = 0, introObsTimer = 0;
 function spawnTick(dt: number) {
   if (waveGrace > 0) waveGrace = Math.max(0, waveGrace - dt / 3);
-  const diff = Math.min(score / 20, 4);
-  const baseInterval = score < 10
-    ? Math.max(0.25, 1.2 - diff * 0.42)
-    : Math.max(0.14, 1.0 - diff * 0.42);
-  const interval = baseInterval * (1 + waveGrace * 0.8); // wave 직후 최대 80% 간격 증가
+  const diff = Math.min(score / 15, 4); // makeObs와 동일하게 15로
+  const baseInterval = Math.max(0.12, 0.85 - diff * 0.35); // 초반 간격 단축
+  const interval = baseInterval * (1 + waveGrace * 0.8);
   obsTimer += dt;
   if (obsTimer >= interval) {
     obsTimer = 0;
     obstacles.push(makeObs(false));
-    if (diff > 0.5 && Math.random() < 0.5) obstacles.push(makeObs(false));
-    if (diff > 1.5 && Math.random() < 0.4) obstacles.push(makeObs(false));
+    if (diff > 0.3 && Math.random() < 0.5) obstacles.push(makeObs(false)); // 더 일찍 다중 스폰
+    if (diff > 1.2 && Math.random() < 0.4) obstacles.push(makeObs(false));
+    if (diff > 2.5 && Math.random() < 0.3) obstacles.push(makeObs(false)); // 후반 4개 동시
+  }
+
+  // 패턴 스폰 (20초 이후, 8~14초마다)
+  if (score >= 20) {
+    patternTimer += dt;
+    const patternInterval = Math.max(8, 14 - diff * 1.5);
+    if (patternTimer >= patternInterval) {
+      patternTimer = 0;
+      triggerPattern();
+    }
   }
 }
 
@@ -404,19 +556,23 @@ function drawWaveFlash() {
   }
 }
 
-// 웨이브 전환 힌트 (× 기호 페이드아웃 — In Line의 방향 화살표와 동일 구조)
+// 웨이브 전환 힌트 — 중앙에서 퍼지는 링(ripple)
 function drawWaveHint() {
   if (waveHintAlpha <= 0) return;
+  const progress = 1 - waveHintAlpha; // 0→1 (확장)
+  const maxR = Math.hypot(W, H) * 0.55;
   ctx.save();
-  ctx.globalAlpha = waveHintAlpha * 0.28;
-  ctx.fillStyle = gameColor;
-  const sz = Math.min(W, H) * 0.38;
-  ctx.font = `900 ${sz}px "Space Grotesk", sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('\u00d7', W / 2, H / 2); // ×
+  ctx.strokeStyle = gameColor;
+  // 링 2개: 약간 시차를 두고
+  for (let i = 0; i < 2; i++) {
+    const t = Math.max(0, progress - i * 0.18);
+    const r = t * maxR;
+    ctx.globalAlpha = (1 - t) * waveHintAlpha * 0.45;
+    ctx.lineWidth = 3 - i;
+    ctx.beginPath(); ctx.arc(W / 2, H / 2, r, 0, Math.PI * 2); ctx.stroke();
+  }
   ctx.restore();
-  waveHintAlpha = Math.max(0, waveHintAlpha - 0.03);
+  waveHintAlpha = Math.max(0, waveHintAlpha - 0.025);
 }
 
 // ── Game Loop ─────────────────────────────────────────────────────────────────
@@ -473,20 +629,24 @@ function loop(ts: number) {
     }
 
     if (drag) hintAlpha = 0;
+    if (invincibleT > 0) invincibleT = Math.max(0, invincibleT - dt);
 
-    if (obstacles.some(o => collidesObs(player, o))) {
+    if (invincibleT <= 0 && obstacles.some(o => collidesObs(player, o))) {
       explode(player.x, player.y);
       ait?.generateHapticFeedback({ type: 'error' });
       state = S.DEAD; deadT = 0;
     }
 
+    const showPlayer = invincibleT <= 0 || Math.floor(invincibleT * 8) % 2 === 0;
+    updateToast(dt);
     ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H);
     ctx.save();
     ctx.translate(shakeX, shakeY);
     drawObs();
     drawWaveFlash();
     drawWaveHint();
-    drawDot(player.x, player.y, player.r);
+    drawToast();
+    if (showPlayer) drawDot(player.x, player.y, player.r);
     ctx.restore();
     drawHintArea();
   }
@@ -513,11 +673,13 @@ function startZoom() {
 function startGame() {
   obstacles = []; particles = [];
   score = 0; scoreF = 0;
-  obsTimer = 0; hintAlpha = 1;
+  obsTimer = 0; hintAlpha = 1; patternTimer = 0;
   gameTime = 0; nextWave = 15;
   waveGrace = 0; waveHintAlpha = 0;
   shakeIntensity = 0;
-  colorIdx = 0; gameColor = COLORS[0]; applyColor();
+  colorIdx = 0; gameColor = COLORS[0]; currentShape = 'circle'; applyColor();
+  milestoneIdx = 0; toast = null;
+  invincibleT = 0; hasContinued = false;
   resetPlayer();
   state = S.PLAY;
   scoreEl.style.display = 'block';
@@ -527,7 +689,21 @@ function startGame() {
 
 async function showGameOver() {
   document.getElementById('goScore')!.textContent = String(score);
-  updateRetryBtn();
+  document.getElementById('continueBtn')!.style.display = hasContinued ? 'none' : '';
+  const best = loadBest();
+  const goBestEl = document.getElementById('goBest')!;
+  if (score > best) {
+    saveBest(score);
+    goBestEl.textContent = 'NEW BEST!';
+    goBestEl.className = 'newbest';
+  } else if (best > 0) {
+    const diff = best - score;
+    goBestEl.textContent = diff > 0 ? `BEST ${best}s · ${diff}s 남았어요` : `BEST ${best}s`;
+    goBestEl.className = '';
+  } else {
+    goBestEl.textContent = '';
+    goBestEl.className = '';
+  }
   document.getElementById('gameOver')!.classList.add('show');
   try {
     const result = await ait?.submitGameCenterLeaderBoardScore({ score: String(score) });
@@ -546,80 +722,79 @@ function resetToIntro() {
 // ── 광고 ─────────────────────────────────────────────────────────────────────
 let adLoaded = false;
 
-function todayStr() {
-  return new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
-}
-function loadFreeRetries(): number {
-  const saved = localStorage.getItem(getRetriesKey());
-  const lastDate = localStorage.getItem(getRetriesDateKey());
-  if (lastDate !== todayStr()) {
-    localStorage.setItem(getRetriesKey(), '3');
-    localStorage.setItem(getRetriesDateKey(), todayStr());
-    return 3;
-  }
-  return saved !== null ? parseInt(saved, 10) : 3;
-}
-function saveFreeRetries(n: number) {
-  localStorage.setItem(getRetriesKey(), String(n));
-  localStorage.setItem(getRetriesDateKey(), todayStr());
-}
+// 이어하기: 점수·상태 유지, 장애물 클리어, 무적 2초 (한 판 1회)
+let hasContinued = false;
 
-let freeRetries = loadFreeRetries();
-
-const retryBtn = document.getElementById('retryBtn')!;
-function updateRetryBtn() {
-  retryBtn.textContent = freeRetries > 0 ? '다시 도전' : '(광고 보고) 다시 도전';
+function continueGame() {
+  hasContinued = true;
+  document.getElementById('gameOver')!.classList.remove('show');
+  obstacles = []; particles = [];
+  obsTimer = 0;
+  waveGrace = 1.5;
+  invincibleT = 2.0;
+  hintAlpha = 0;
+  resetPlayer();
+  state = S.PLAY;
+  preloadAitAd();
+  preloadAd();
 }
 
 async function preloadAd() {
   if (!AdMobPlugin) return;
   try {
-    await AdMobPlugin.prepareInterstitial({ adId: ADMOB_INTERSTITIAL_ID });
+    await AdMobPlugin.prepareRewardVideoAd({ adId: ADMOB_REWARD_ID });
     adLoaded = true;
   } catch (e) { console.warn('광고 로드 실패:', e); }
 }
 
-async function showAitAd() {
-  // AIT 환경 (토스 앱): 리워드 전면광고 우선
+async function showAitAd(onComplete: () => void) {
+  // AIT 환경 (토스 앱): 리워드 광고
   if (ait && aitAdLoaded) {
     aitAdLoaded = false;
+    let rewardEarned = false;
     ait.showFullScreenAd({
       options: { adGroupId: AIT_AD_GROUP_ID },
       onEvent: (event) => {
-        if (event.type === 'dismissed') {
-          document.getElementById('gameOver')!.classList.remove('show');
-          resetToIntro();
+        if (event.type === 'userEarnedReward') {
+          rewardEarned = true;
+        } else if (event.type === 'dismissed') {
+          if (rewardEarned) onComplete();
           preloadAitAd();
         } else if (event.type === 'failedToShow') {
-          showAdFallback();
+          showAdFallback(onComplete);
         }
       },
-      onError: () => { showAdFallback(); },
+      onError: () => { showAdFallback(onComplete); },
     });
     return;
   }
 
-  // AdMob (Android Capacitor)
-  if (!AdMobPlugin || !InterstitialEvents || !adLoaded) { showAdFallback(); return; }
+  // AdMob 리워드 비디오 (Android Capacitor)
+  if (!AdMobPlugin || !RewardEvents || !adLoaded) { showAdFallback(onComplete); return; }
   adLoaded = false;
+  let rewardEarned = false;
   try {
-    const dismissed = await AdMobPlugin.addListener(InterstitialEvents.Dismissed, () => {
-      document.getElementById('gameOver')!.classList.remove('show');
-      resetToIntro();
+    const rewarded = await AdMobPlugin.addListener(RewardEvents.Rewarded, () => {
+      rewardEarned = true;
+    });
+    const dismissed = await AdMobPlugin.addListener(RewardEvents.Dismissed, () => {
+      if (rewardEarned) onComplete();
       preloadAd();
+      rewarded.remove();
       dismissed.remove();
     });
-    const failed = await AdMobPlugin.addListener(InterstitialEvents.FailedToShow, () => {
-      showAdFallback();
+    const failed = await AdMobPlugin.addListener(RewardEvents.FailedToShow, () => {
+      showAdFallback(onComplete);
+      rewarded.remove();
+      dismissed.remove();
       failed.remove();
-      dismissed.remove();
     });
-    await AdMobPlugin.showInterstitial();
-  } catch (e) { console.warn('광고 표시 실패:', e); showAdFallback(); }
+    await AdMobPlugin.showRewardVideoAd();
+  } catch (e) { console.warn('광고 표시 실패:', e); showAdFallback(onComplete); }
 }
 
 let adFallbackInterval: ReturnType<typeof setInterval> | null = null;
-function showAdFallback() {
+function showAdFallback(onComplete: () => void) {
   const el = document.getElementById('adScreen')!;
   el.classList.add('show');
   let cnt = 5;
@@ -630,24 +805,19 @@ function showAdFallback() {
     if (cnt <= 0) {
       clearInterval(adFallbackInterval!);
       el.classList.remove('show');
-      document.getElementById('gameOver')!.classList.remove('show');
-      resetToIntro();
+      onComplete();
     }
   }, 1000);
 }
 
 // ── 버튼 ─────────────────────────────────────────────────────────────────────
 document.getElementById('startBtn')!.addEventListener('click', startZoom);
-retryBtn.addEventListener('click', () => {
-  if (freeRetries > 0) {
-    freeRetries--;
-    saveFreeRetries(freeRetries);
-    updateRetryBtn();
-    document.getElementById('gameOver')!.classList.remove('show');
-    resetToIntro();
-  } else {
-    showAitAd();
-  }
+document.getElementById('continueBtn')!.addEventListener('click', () => {
+  showAitAd(continueGame);
+});
+document.getElementById('retryBtn')!.addEventListener('click', () => {
+  document.getElementById('gameOver')!.classList.remove('show');
+  resetToIntro();
 });
 document.getElementById('leaderboardBtn')!.addEventListener('click', async () => {
   try {
