@@ -5,7 +5,7 @@ export default defineConfig({
   brand: {
     displayName: '닷지',
     primaryColor: '#3182F6',
-    icon: './icon.png',
+    icon: 'https://static.toss.im/appsintoss/27829/3ebfd78a-1786-4649-8b13-0192783a64cd.png',
   },
   web: {
     host: 'localhost',

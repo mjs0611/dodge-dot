@@ -10,15 +10,49 @@
 
 <canvas id="gameCanvas"></canvas>
 
+<!-- HUD -->
+<div id="hud">
+  <div id="score">0s</div>
+  <div id="coinCountHUD" class="coin-hud" style="display:none">
+    <span class="coin-icon-hud">🟡</span><span id="sessionCoinVal">0</span>
+  </div>
+</div>
+
+<!-- Powerup icons -->
+<div id="itemHUD">
+  <div id="shieldIcon"  class="powerup-icon" style="display:none">🛡️</div>
+  <div id="slowmoIcon"  class="powerup-icon" style="display:none">⏱️</div>
+  <div id="magnetIcon"  class="powerup-icon" style="display:none">🧲</div>
+  <div id="ghostIcon"   class="powerup-icon" style="display:none">👻</div>
+</div>
+
 <!-- Intro -->
 <div id="intro">
   <div id="gameTitle">Dodge Dot</div>
   <div id="gameSub">Dodge · Survive · Escape</div>
-  <button id="startBtn">START</button>
+  <div class="intro-btns">
+    <button id="startBtn">START</button>
+    <button id="shopBtn">SHOP</button>
+    <button id="tutorialBtn">게임 안내</button>
+  </div>
 </div>
 
-<!-- Score -->
-<div id="score">0s</div>
+<!-- Shop Modal -->
+<div id="shopOverlay">
+  <div id="shopBox">
+    <div id="shopHeader">
+      <h2>SHOP</h2>
+      <div class="coin-balance">🟡 <span id="shopCoinVal">0</span></div>
+    </div>
+    <div class="shop-content">
+      <div class="sku-section-title">TRAIL EFFECTS</div>
+      <div class="sku-grid" id="playerSkinsGrid"></div>
+    </div>
+    <div class="shop-footer">
+      <button id="shopCloseBtn">닫기</button>
+    </div>
+  </div>
+</div>
 
 <!-- Game Over -->
 <div id="gameOver">
@@ -26,7 +60,11 @@
   <div id="goScore">0</div>
   <div id="goUnit">SECONDS</div>
   <div id="goBest"></div>
+  <div class="go-coins">획득 코인 🟡 <span id="goCoins">0</span></div>
+  <div id="goPointsRow" style="display:none"></div>
+  <button class="goBtn point-extend" id="extraPointBtn" style="display:none">🎥 광고 보고 하루 한도 +5원</button>
   <button class="goBtn primary" id="continueBtn">이어하기 (광고 시청)</button>
+  <button class="goBtn gold" id="doubleCoinsBtn">🎥 코인 2배 받기</button>
   <button class="goBtn secondary" id="retryBtn">처음부터</button>
   <button class="goBtn secondary" id="leaderboardBtn">리더보드 보기</button>
 </div>
@@ -42,6 +80,36 @@
       <button id="closeNo">계속하기</button>
       <button id="closeYes">종료</button>
     </div>
+  </div>
+</div>
+
+<!-- Tutorial Modal -->
+<div id="tutorialModal">
+  <div id="tutorialBox">
+    <div id="tutorialTitle">Dodge Dot 안내</div>
+    <div id="tutorialContent">
+      <div class="tutSection">
+        <div class="tutSectionTitle">🕹️ 조작 방법</div>
+        <div class="tutSectionDesc">화면을 드래그해서 도트를 움직이세요. 사방에서 날아오는 장애물을 피해 최대한 오래 버티세요!</div>
+      </div>
+      <div id="tutPointSection" class="tutSection">
+        <div class="tutSectionTitle">🔵 토스포인트 받는 법</div>
+        <div class="tutSectionDesc">게임 중 파란 <b>🔵 토스포인트 코인</b>이 등장하면 수집하세요! 1개 수집 시 <b>토스포인트 1원</b>이 적립돼요.<br>한 판 최대 <b>3원</b>, 하루 무료 <b>5원</b>까지 받을 수 있어요.</div>
+      </div>
+      <div class="tutSection">
+        <div class="tutSectionTitle">🟡 코인 & 아이템</div>
+        <div class="tutSectionDesc">게임 중 코인을 모아 샵에서 스킨을 구매하세요. 방패, 슬로우모, 마그넷, 고스트 아이템도 랜덤하게 등장해요.</div>
+      </div>
+      <div class="tutSection">
+        <div class="tutSectionTitle">🟡 코인 웨이브</div>
+        <div class="tutSectionDesc">랜덤한 타이밍에 6초간 장애물이 사라지고 코인이 쏟아져요. 최대한 많이 수집하세요!</div>
+      </div>
+      <div class="tutSection">
+        <div class="tutSectionTitle">⚠️ 특수 장애물</div>
+        <div class="tutSectionDesc">오래 버틸수록 추적탄, 톱날, 레이저, 기뢰가 차례로 등장해요. 당황하지 말고 침착하게 피하세요.</div>
+      </div>
+    </div>
+    <button id="tutorialCloseBtn">시작하기</button>
   </div>
 </div>
 
