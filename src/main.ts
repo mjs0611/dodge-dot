@@ -53,7 +53,7 @@ function preloadAitRewardAd() {
 }
 
 // ── 토스포인트 프로모션 ────────────────────────────────────────────────────────
-const AIT_PROMO_CODE      = '01KPGPMB49PM8G77X95SYW59VN';
+const AIT_PROMO_CODE      = '01KQAHD4H897QF24PD0XZNKYR8';
 const AIT_AD_REWARD_POINT = 'ait.v2.live.d1c6d14bf41e42f8'; // 일일 한도 연장 (보상형)
 const HAS_PROMO = AIT_PROMO_CODE.length > 0;
 let aitRewardPointLoaded = false;
@@ -420,12 +420,12 @@ function spawnPickup() {
   let k: PickupType;
 
   if (canPoint) {
-    // tosspoint 5% 확률로 등장 (나머지 비율 소폭 조정)
-    if      (roll < 0.55) k = 'coin';
-    else if (roll < 0.68) k = 'slowmo';
-    else if (roll < 0.80) k = 'magnet';
-    else if (roll < 0.90) k = 'shield';
-    else if (roll < 0.95) k = 'ghost';
+    // tosspoint 10% 확률로 등장
+    if      (roll < 0.50) k = 'coin';
+    else if (roll < 0.63) k = 'slowmo';
+    else if (roll < 0.75) k = 'magnet';
+    else if (roll < 0.85) k = 'shield';
+    else if (roll < 0.90) k = 'ghost';
     else                  k = 'tosspoint';
   } else {
     if      (roll < 0.60) k = 'coin';
