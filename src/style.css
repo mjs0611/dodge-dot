@@ -32,6 +32,12 @@ body { font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-ser
   display: flex; align-items: center; gap: 4px;
   font-size: 13px; font-weight: 700; color: rgba(0,0,0,0.35);
 }
+#multHUD {
+  font-size: 13px; font-weight: 900; letter-spacing: 1px;
+  color: var(--game-color, #000);
+  opacity: 0.75;
+  transition: color 0.3s;
+}
 .coin-icon-hud { font-size: 12px; }
 
 /* ── Powerup Icons ── */

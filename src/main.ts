@@ -297,6 +297,16 @@ let coinStageObsTimer = 0;
 
 const COIN_STAGE_DUR = 6.0;
 
+// ── Near-Miss 배율 ────────────────────────────────────────────────────────────
+let dangerCounter   = 0;  // 누적 아슬아슬 횟수 (최대 10)
+let dangerDecayTimer = 0; // 마지막 near-miss 이후 경과 시간
+let nearMissCooldown = 0; // 연속 트리거 방지 쿨다운
+let nearMissFlash    = 0; // 링 flash intensity (0~1)
+
+// ── 코인 콤보 ─────────────────────────────────────────────────────────────────
+let coinCombo      = 0;
+let coinComboTimer = 0;
+
 // 파워업 활성 상태
 let shieldActive  = false;
 let slowmoActiveT = 0;   // 남은 시간 (초)
@@ -644,9 +654,14 @@ function drawPickups() {
 
 function collectPickup(p: Pickup) {
   if (p.k === 'coin') {
-    sessionCoins++; totalCoins++; saveCoins(totalCoins);
+    coinCombo++;
+    coinComboTimer = 3.0;
+    const bonus  = coinCombo >= 5 ? 2 : coinCombo >= 3 ? 1 : 0;
+    const earned = 1 + bonus;
+    sessionCoins += earned; totalCoins += earned; saveCoins(totalCoins);
     document.getElementById('sessionCoinVal')!.textContent = String(sessionCoins);
     ait?.generateHapticFeedback({ type: 'success' }).catch(() => {});
+    if (coinCombo >= 3) toast = { text: `🟡 COMBO ×${coinCombo}${bonus > 0 ? ` +${bonus}!` : '!'}`, alpha: 1, y: H * 0.42 };
   } else if (p.k === 'shield') {
     shieldActive = true;
     ait?.generateHapticFeedback({ type: 'success' }).catch(() => {});
@@ -847,9 +862,17 @@ function drawUnlockToast() {
 }
 
 function tickScore(dt: number) {
-  scoreF += dt;
+  const dangerMult = 1 + Math.min(dangerCounter, 10) * 0.2;
+  scoreF += dt * dangerMult;
   const prev = score; score = Math.floor(scoreF);
   scoreEl.textContent = score + 's';
+  const multEl = document.getElementById('multHUD')!;
+  if (dangerCounter > 0) {
+    multEl.textContent = `×${dangerMult.toFixed(1)}`;
+    multEl.style.display = '';
+  } else {
+    multEl.style.display = 'none';
+  }
   while (milestoneIdx < MILESTONES.length && score >= MILESTONES[milestoneIdx]) {
     if (prev < MILESTONES[milestoneIdx]) { toast = { text: MILESTONES[milestoneIdx] + 's !', alpha: 1, y: H * 0.38 }; ait?.generateHapticFeedback({ type: 'confetti' }).catch(() => {}); }
     milestoneIdx++;
@@ -1008,7 +1031,32 @@ function spawnFan(diff: number) {
     obstacles.push({ x, y, r, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, spin: (Math.random() < 0.5 ? 1 : -1) * rand(0, 0.02), shape: currentShape });
   }
 }
-function triggerPattern() { const diff = Math.min(score / 20, 4); if (Math.random() < 0.55) spawnPinwheel(diff); else spawnFan(diff); }
+function spawnSpiral(diff: number) {
+  const count      = Math.floor(rand(6, 11));
+  const spd        = (3.5 + diff) * 0.9;
+  const r          = rand(4, 13);
+  const startAngle = Math.random() * Math.PI * 2;
+  const turns      = rand(0.9, 1.7);
+  const cw         = Math.random() < 0.5 ? 1 : -1;
+  for (let i = 0; i < count; i++) {
+    setTimeout(() => {
+      if (state !== S.PLAY) return;
+      const angle     = startAngle + cw * (i / count) * turns * Math.PI * 2;
+      const [px, py]  = perimeterPoint(angle);
+      const toCenter  = Math.atan2(H / 2 - py, W / 2 - px);
+      const shotAngle = toCenter + cw * 0.32;
+      obstacles.push({ x: px, y: py, r, vx: Math.cos(shotAngle) * spd, vy: Math.sin(shotAngle) * spd, spin: cw * rand(0.006, 0.018), shape: currentShape });
+    }, i * 130);
+  }
+}
+
+function triggerPattern() {
+  const diff = Math.min(score / 20, 4);
+  const roll = Math.random();
+  if      (roll < 0.38) spawnPinwheel(diff);
+  else if (roll < 0.70) spawnFan(diff);
+  else                  spawnSpiral(diff);
+}
 
 // ── Controls ─────────────────────────────────────────────────────────────────
 let drag = false, dragX = 0, dragY = 0, hintAlpha = 1;
@@ -1177,6 +1225,32 @@ function loop(ts: number) {
       }
     }
 
+    // ── Near-miss 감지 + 타이머 ────────────────────────────────────────────────
+    nearMissCooldown = Math.max(0, nearMissCooldown - rawDt);
+    nearMissFlash    = Math.max(0, nearMissFlash - rawDt * 2.5);
+    if (coinComboTimer > 0) { coinComboTimer -= rawDt; if (coinComboTimer <= 0) coinCombo = 0; }
+    if (dangerCounter > 0) {
+      dangerDecayTimer += rawDt;
+      if (dangerDecayTimer > 4.5) { dangerDecayTimer = 0; dangerCounter = Math.max(0, dangerCounter - 1); }
+    }
+    if (nearMissCooldown <= 0 && invincibleT <= 0 && ghostActiveT <= 0 && state === S.PLAY) {
+      const NEAR_DIST = 20;
+      let closestGap = Infinity;
+      for (const o of obstacles) {
+        const gap = Math.hypot(player.x - o.x, player.y - o.y) - player.r - o.r;
+        if (gap > 0 && gap < NEAR_DIST) closestGap = Math.min(closestGap, gap);
+      }
+      if (closestGap < NEAR_DIST) {
+        nearMissCooldown = 0.35;
+        nearMissFlash    = 1.0;
+        dangerCounter    = Math.min(10, dangerCounter + 1);
+        dangerDecayTimer = 0;
+        ait?.generateHapticFeedback({ type: 'basicMedium' }).catch(() => {});
+        const mult = (1 + dangerCounter * 0.2).toFixed(1);
+        toast = { text: dangerCounter >= 3 ? `CLOSE! ×${mult}` : 'CLOSE!', alpha: 1, y: H * 0.42 };
+      }
+    }
+
     const ghostAlpha  = ghostActiveT > 0 ? 0.4 : 1;
     const showPlayer  = invincibleT <= 0 || Math.floor(invincibleT * 8) % 2 === 0;
 
@@ -1194,6 +1268,29 @@ function loop(ts: number) {
     drawToast();
     drawUnlockToast();
     if (showPlayer) {
+      // Near-miss 위험 배율 링
+      if (dangerCounter > 0) {
+        const ringAlpha = Math.min(1, (dangerCounter / 10) * 0.65 + nearMissFlash * 0.35);
+        const ringR     = player.r + 5 + dangerCounter * 2;
+        ctx.save();
+        ctx.globalAlpha    = ringAlpha * ghostAlpha;
+        ctx.strokeStyle    = getPlayerColor();
+        ctx.lineWidth      = 1.5 + nearMissFlash * 1.5;
+        ctx.shadowBlur     = 12; ctx.shadowColor = getPlayerColor();
+        ctx.beginPath(); ctx.arc(player.x, player.y, ringR, 0, Math.PI * 2); ctx.stroke();
+        ctx.restore();
+      }
+      // Ghost: 크로마틱 어버레이션
+      if (ghostActiveT > 0) {
+        const off = 5 + Math.sin(Date.now() * 0.02) * 2;
+        ctx.save();
+        ctx.globalAlpha = ghostAlpha * 0.45;
+        ctx.fillStyle = '#FF2D78';
+        ctx.beginPath(); ctx.arc(player.x - off, player.y, player.r, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#00F0FF';
+        ctx.beginPath(); ctx.arc(player.x + off, player.y, player.r, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      }
       ctx.globalAlpha = ghostAlpha;
       drawDot(player.x, player.y, player.r, getPlayerColor());
       ctx.globalAlpha = 1;
@@ -1236,6 +1333,8 @@ function startGame() {
   invincibleT = 0; hasContinued = false;
   shieldActive = false; slowmoActiveT = 0; magnetActiveT = 0; ghostActiveT = 0;
   sessionCoins = 0; runPointsEarned = 0;
+  dangerCounter = 0; dangerDecayTimer = 0; nearMissCooldown = 0; nearMissFlash = 0;
+  coinCombo = 0; coinComboTimer = 0;
   document.getElementById('sessionCoinVal')!.textContent = '0';
   updatePowerupHUD();
   resetPlayer();
