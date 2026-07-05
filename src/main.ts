@@ -9,7 +9,6 @@ type AitModule = {
   showFullScreenAd: typeof import('@apps-in-toss/web-framework').showFullScreenAd;
   generateHapticFeedback: typeof import('@apps-in-toss/web-framework').generateHapticFeedback;
   getUserKeyForGame: typeof import('@apps-in-toss/web-framework').getUserKeyForGame;
-  grantPromotionRewardForGame: typeof import('@apps-in-toss/web-framework').grantPromotionRewardForGame;
 };
 let ait: AitModule | null = null;
 let aitAdLoaded       = false;
@@ -23,12 +22,10 @@ import('@apps-in-toss/web-framework').then((m) => {
     showFullScreenAd: m.showFullScreenAd,
     generateHapticFeedback: m.generateHapticFeedback,
     getUserKeyForGame: m.getUserKeyForGame,
-    grantPromotionRewardForGame: m.grantPromotionRewardForGame,
   };
   document.getElementById('leaderboardBtn')!.style.display = 'block';
   preloadAitAd();
   preloadAitRewardAd();
-  preloadAitRewardPoint();
   m.getUserKeyForGame().catch(() => {});
 }).catch(() => {});
 
@@ -52,75 +49,7 @@ function preloadAitRewardAd() {
   });
 }
 
-// ── 토스포인트 프로모션 ────────────────────────────────────────────────────────
-const AIT_PROMO_CODE      = '01KQAHD4H897QF24PD0XZNKYR8';
-const AIT_AD_REWARD_POINT = 'ait.v2.live.d1c6d14bf41e42f8'; // 일일 한도 연장 (보상형)
-const HAS_PROMO = AIT_PROMO_CODE.length > 0;
-let aitRewardPointLoaded = false;
-
-function preloadAitRewardPoint() {
-  if (!ait || !AIT_AD_REWARD_POINT) return;
-  aitRewardPointLoaded = false;
-  ait.loadFullScreenAd({
-    options: { adGroupId: AIT_AD_REWARD_POINT },
-    onEvent: () => { aitRewardPointLoaded = true; },
-    onError: () => { aitRewardPointLoaded = false; },
-  });
-}
-
-// Daily Toss Point Limit
-interface DailyData { date: string; earned: number; extra: number; }
-const KEY_DAILY    = 'dd_daily';
 const KEY_TUTORIAL = 'dd_tutorialSeen';
-
-function todayStr(): string { return new Date().toISOString().slice(0, 10); }
-function loadDaily(): DailyData {
-  try {
-    const raw = localStorage.getItem(KEY_DAILY);
-    if (raw) {
-      const d: DailyData = JSON.parse(raw);
-      if (d.date === todayStr()) return d;
-    }
-  } catch {}
-  return { date: todayStr(), earned: 0, extra: 0 };
-}
-function saveDaily(d: DailyData) { localStorage.setItem(KEY_DAILY, JSON.stringify(d)); }
-function dailyLimit(d: DailyData): number { return 5 + d.extra * 5; }
-function canEarnToday(d: DailyData): boolean { return d.earned < dailyLimit(d); }
-
-const POINT_PER_RUN_MAX = 3;
-let runPointsEarned = 0;
-
-function refreshGoPointsRow() {
-  const row = document.getElementById('goPointsRow');
-  if (!row) return;
-  if (!HAS_PROMO) { row.style.display = 'none'; return; }
-  const daily = loadDaily();
-  if (daily.earned > 0) {
-    row.textContent = `🔵 오늘 받은 토스포인트 ${daily.earned}원`;
-    row.style.display = '';
-  } else {
-    row.style.display = 'none';
-  }
-}
-
-async function grantTossPoint() {
-  if (!HAS_PROMO) return;
-  const daily = loadDaily();
-  if (!canEarnToday(daily) || runPointsEarned >= POINT_PER_RUN_MAX) return;
-
-  if (!ait?.grantPromotionRewardForGame) return;
-  try {
-    const result = await ait.grantPromotionRewardForGame({ params: { promotionCode: AIT_PROMO_CODE, amount: 1 } });
-    const success = result && typeof result === 'object' && 'key' in result;
-    if (success) {
-      runPointsEarned++;
-      daily.earned++;
-      saveDaily(daily);
-      ait?.generateHapticFeedback({ type: 'success' }).catch(() => {});
-    }
-  } catch {}
-}
 
 // ── AdMob ────────────────────────────────────────────────────────────────────
 const ADMOB_REWARD_ID     = 'ca-app-pub-4557219410513767/7207079398';
@@ -283,7 +212,7 @@ type Special = {
 let specials: Special[] = [];
 
 // ── 픽업 아이템 ───────────────────────────────────────────────────────────────
-type PickupType = 'coin' | 'shield' | 'slowmo' | 'magnet' | 'ghost' | 'tosspoint';
+type PickupType = 'coin' | 'shield' | 'slowmo' | 'magnet' | 'ghost';
 type Pickup = { k: PickupType; x: number; y: number; r: number; life: number };
 let pickups: Pickup[] = [];
 
@@ -424,33 +353,21 @@ function makeSpecial(): Special {
 // ── 픽업 생성 (확률 분포) ────────────────────────────────────────────────────
 // coin 60% / slowmo 13% / magnet 12% / shield 10% / ghost 5%
 function spawnPickup() {
-  const daily    = loadDaily();
-  const canPoint = HAS_PROMO && canEarnToday(daily) && runPointsEarned < POINT_PER_RUN_MAX;
-  const roll     = Math.random();
+  const roll = Math.random();
   let k: PickupType;
 
-  if (canPoint) {
-    // tosspoint 10% 확률로 등장
-    if      (roll < 0.50) k = 'coin';
-    else if (roll < 0.63) k = 'slowmo';
-    else if (roll < 0.75) k = 'magnet';
-    else if (roll < 0.85) k = 'shield';
-    else if (roll < 0.90) k = 'ghost';
-    else                  k = 'tosspoint';
-  } else {
-    if      (roll < 0.60) k = 'coin';
-    else if (roll < 0.73) k = 'slowmo';
-    else if (roll < 0.85) k = 'magnet';
-    else if (roll < 0.95) k = 'shield';
-    else                  k = 'ghost';
-  }
+  if      (roll < 0.60) k = 'coin';
+  else if (roll < 0.73) k = 'slowmo';
+  else if (roll < 0.85) k = 'magnet';
+  else if (roll < 0.95) k = 'shield';
+  else                  k = 'ghost';
 
   pickups.push({
     k,
     x: rand(55, W - 55),
     y: rand(70, H - 70),
     r: 16,
-    life: k === 'coin' ? 8.0 : k === 'tosspoint' ? 9.0 : 6.5,
+    life: k === 'coin' ? 8.0 : 6.5,
   });
 }
 
@@ -594,8 +511,7 @@ function collidesSpecial(dot: { x: number; y: number; r: number }, o: Special): 
 }
 
 // ── 픽업 업데이트/드로우/충돌 ────────────────────────────────────────────────
-type ImagedPickup = Exclude<PickupType, 'tosspoint'>;
-const PICKUP_IMGS: Record<ImagedPickup, HTMLImageElement> = {
+const PICKUP_IMGS: Record<PickupType, HTMLImageElement> = {
   coin:   Object.assign(new Image(), { src: '/assets/coin.png' }),
   shield: Object.assign(new Image(), { src: '/assets/shield.png' }),
   slowmo: Object.assign(new Image(), { src: '/assets/slowmo.png' }),
@@ -624,23 +540,12 @@ function drawPickups() {
     ctx.save();
     ctx.globalAlpha = alpha;
 
-    if (p.k === 'tosspoint') {
-      // 파란 원 + ₩ 텍스트로 직접 렌더
-      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-      ctx.fillStyle = '#3182F6'; ctx.fill();
-      ctx.fillStyle = '#fff';
-      ctx.font = `900 ${Math.floor(r * 1.05)}px "Space Grotesk", sans-serif`;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('₩', p.x, p.y + 1);
-      ctx.textAlign = 'left';
+    const img = PICKUP_IMGS[p.k];
+    if (img.complete && img.naturalWidth > 0) {
+      ctx.drawImage(img, p.x - r, p.y - r, r * 2, r * 2);
     } else {
-      const img = PICKUP_IMGS[p.k as ImagedPickup];
-      if (img.complete && img.naturalWidth > 0) {
-        ctx.drawImage(img, p.x - r, p.y - r, r * 2, r * 2);
-      } else {
-        ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-        ctx.fillStyle = '#FFB300'; ctx.fill();
-      }
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = '#FFB300'; ctx.fill();
     }
 
     // 마그넷 활성 중 범위 링 표시
@@ -674,10 +579,6 @@ function collectPickup(p: Pickup) {
   } else if (p.k === 'ghost') {
     ghostActiveT = GHOST_DUR;
     ait?.generateHapticFeedback({ type: 'success' }).catch(() => {});
-  } else if (p.k === 'tosspoint') {
-    unlockToast = { text: '🔵 토스포인트 +1원!', alpha: 1 };
-    ait?.generateHapticFeedback({ type: 'confetti' }).catch(() => {});
-    grantTossPoint();
   }
 }
 
@@ -1332,7 +1233,7 @@ function startGame() {
   Object.keys(UNLOCKED).forEach(k => UNLOCKED[k] = false);
   invincibleT = 0; hasContinued = false;
   shieldActive = false; slowmoActiveT = 0; magnetActiveT = 0; ghostActiveT = 0;
-  sessionCoins = 0; runPointsEarned = 0;
+  sessionCoins = 0;
   dangerCounter = 0; dangerDecayTimer = 0; nearMissCooldown = 0; nearMissFlash = 0;
   coinCombo = 0; coinComboTimer = 0;
   document.getElementById('sessionCoinVal')!.textContent = '0';
@@ -1355,16 +1256,6 @@ async function showGameOver() {
   if (score > best) { saveBest(score); goBestEl.textContent = 'NEW BEST!'; goBestEl.className = 'newbest'; }
   else if (best > 0) { goBestEl.textContent = best - score > 0 ? `BEST ${best}s · ${best - score}s 남았어요` : `BEST ${best}s`; goBestEl.className = ''; }
   else { goBestEl.textContent = ''; goBestEl.className = ''; }
-
-  // 토스포인트 현황 표시
-  refreshGoPointsRow();
-  const extraPointBtn = document.getElementById('extraPointBtn')!;
-  if (HAS_PROMO && AIT_AD_REWARD_POINT) {
-    const daily = loadDaily();
-    extraPointBtn.style.display = !canEarnToday(daily) ? '' : 'none';
-  } else {
-    extraPointBtn.style.display = 'none';
-  }
 
   document.getElementById('gameOver')!.classList.add('show');
   try {
@@ -1475,39 +1366,9 @@ document.getElementById('leaderboardBtn')!.addEventListener('click', async () =>
   }
 });
 
-// 포인트 한도 연장 (리워드 광고)
-document.getElementById('extraPointBtn')!.addEventListener('click', () => {
-  if (!ait || !AIT_AD_REWARD_POINT || !aitRewardPointLoaded) return;
-  aitRewardPointLoaded = false;
-  (document.getElementById('extraPointBtn') as HTMLButtonElement).disabled = true;
-  ait.showFullScreenAd({
-    options: { adGroupId: AIT_AD_REWARD_POINT },
-    onEvent: (event) => {
-      if (event.type === 'dismissed') {
-        const daily = loadDaily();
-        daily.extra++;
-        saveDaily(daily);
-        refreshGoPointsRow();
-        document.getElementById('extraPointBtn')!.style.display = 'none';
-        preloadAitRewardPoint();
-      } else if (event.type === 'failedToShow') {
-        (document.getElementById('extraPointBtn') as HTMLButtonElement).disabled = false;
-        preloadAitRewardPoint();
-      }
-    },
-    onError: () => {
-      (document.getElementById('extraPointBtn') as HTMLButtonElement).disabled = false;
-      preloadAitRewardPoint();
-    },
-  });
-});
-
 // ── 튜토리얼 ──────────────────────────────────────────────────────────────────
 function showTutorial() {
   const modal = document.getElementById('tutorialModal')!;
-  // HAS_PROMO 아닐 때 포인트 섹션 숨김
-  const pointSec = document.getElementById('tutPointSection');
-  if (pointSec) pointSec.style.display = HAS_PROMO ? '' : 'none';
   modal.classList.add('show');
 }
 function hideTutorial() {
