@@ -220,17 +220,16 @@ body { font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-ser
 #dirPulse {
   position: fixed; top: 0; left: 0; width: 100%; height: 100%;
   pointer-events: none; z-index: 5;
-  border: 0px solid var(--game-color);
+  border: 5px solid var(--game-color);
   opacity: 0;
   box-sizing: border-box;
 }
 #dirPulse.pulse {
-  animation: dirPulse 0.55s ease-out forwards;
+  animation: dirPulse 0.55s ease-out forwards; /* opacity만 애니 (WebView 안전) */
 }
 @keyframes dirPulse {
-  0%   { border-width: 6px; opacity: 0.55; }
-  60%  { border-width: 3px; opacity: 0.2; }
-  100% { border-width: 0px; opacity: 0; }
+  0%   { opacity: 0.5; }
+  100% { opacity: 0; }
 }
 
 /* ── Close confirm ── */
@@ -307,3 +306,31 @@ body { font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-ser
 }
 #adCount { font-size: 80px; font-weight: 900; color: #f0f0f0; }
 #adSub { font-size: 10px; font-weight: 700; color: #ccc; letter-spacing: 2px; text-transform: uppercase; }
+
+/* ── 버튼 키 트래블 (press 0.05s 즉시 눌림 / release 스프링 복귀) ── */
+#startBtn, #shopBtn, #tutorialBtn, .goBtn, .sku-item,
+#shopCloseBtn, #tutorialCloseBtn, #closeNo, #closeYes {
+  transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+#startBtn:active, #shopBtn:active, #tutorialBtn:active, .goBtn:active,
+#shopCloseBtn:active, #tutorialCloseBtn:active, #closeNo:active, #closeYes:active {
+  transform: translateY(2px) scale(0.96);
+  transition-duration: 0.05s;
+}
+.sku-item:active { transform: translateY(1px) scale(0.98); transition-duration: 0.05s; }
+
+/* ── 코인 부족 셰이크 (transform만, JS 리플로우 재트리거) ── */
+.sku-item.shake { animation: skuShake 0.25s ease-in-out; }
+@keyframes skuShake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  55% { transform: translateX(4px); }
+  80% { transform: translateX(-2px); }
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  #dirPulse.pulse, .sku-item.shake { animation: none; }
+  #startBtn, #shopBtn, #tutorialBtn, .goBtn, .sku-item,
+  #shopCloseBtn, #tutorialCloseBtn, #closeNo, #closeYes { transition-duration: 0.01s; }
+}

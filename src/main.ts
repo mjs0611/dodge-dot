@@ -51,6 +51,24 @@ function preloadAitRewardAd() {
 
 const KEY_TUTORIAL = 'dd_tutorialSeen';
 
+// ── 햅틱 그래머 (틱 80ms / 굵은 이벤트 180ms 스로틀, 탭당 1개) ───────────────
+type HapticType = 'tickWeak' | 'tap' | 'tickMedium' | 'softMedium' | 'basicWeak' | 'basicMedium' | 'success' | 'error' | 'wiggle' | 'confetti';
+const TICK_HAPTICS = new Set<HapticType>(['tickWeak', 'tap', 'tickMedium']);
+let lastTickHapticAt = 0, lastHeavyHapticAt = 0;
+function haptic(type: HapticType) {
+  const now = performance.now();
+  if (TICK_HAPTICS.has(type)) {
+    if (now - lastTickHapticAt < 80) return;
+    lastTickHapticAt = now;
+  } else {
+    if (now - lastHeavyHapticAt < 180) return;
+    lastHeavyHapticAt = now;
+  }
+  ait?.generateHapticFeedback({ type }).catch(() => {});
+}
+
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 // ── AdMob ────────────────────────────────────────────────────────────────────
 const ADMOB_REWARD_ID     = 'ca-app-pub-4557219410513767/7207079398';
 type AdMobType            = typeof import('@capacitor-community/admob').AdMob;
@@ -135,25 +153,23 @@ function updateShopUI() {
     div.addEventListener('click', () => {
       if (isOwned) {
         equippedIdx = idx; saveEquippedSkin(idx); updateShopUI();
-        ait?.generateHapticFeedback({ type: 'success' }).catch(() => {});
+        haptic('success');
       } else if (totalCoins >= skin.price) {
         totalCoins -= skin.price; saveCoins(totalCoins);
         ownedSkins.push(skin.id); saveOwnedSkins(ownedSkins);
         equippedIdx = idx; saveEquippedSkin(idx); updateShopUI();
-        ait?.generateHapticFeedback({ type: 'success' }).catch(() => {});
+        haptic('success');
       } else {
-        ait?.generateHapticFeedback({ type: 'error' }).catch(() => {});
-        div.style.transform = 'translateX(-4px)';
-        setTimeout(() => div.style.transform = 'translateX(4px)', 50);
-        setTimeout(() => div.style.transform = '', 100);
+        haptic('error');
+        div.classList.remove('shake'); void div.offsetWidth; div.classList.add('shake');
       }
     });
     grid.appendChild(div);
   });
 }
 
-function openShop()  { updateShopUI(); document.getElementById('shopOverlay')!.classList.add('show'); }
-function closeShop() { document.getElementById('shopOverlay')!.classList.remove('show'); }
+function openShop()  { haptic('tap'); updateShopUI(); document.getElementById('shopOverlay')!.classList.add('show'); }
+function closeShop() { haptic('tap'); document.getElementById('shopOverlay')!.classList.remove('show'); }
 document.getElementById('shopBtn')!.addEventListener('click', openShop);
 document.getElementById('shopCloseBtn')!.addEventListener('click', closeShop);
 
@@ -169,6 +185,15 @@ function colorWithAlpha(hex: string, a: number): string {
   return `rgba(${r},${g},${b},${a})`;
 }
 function applyColor() { document.documentElement.style.setProperty('--game-color', gameColor); }
+
+function mixHex(hex: string, target: number, t: number): string {
+  const r = Math.round(parseInt(hex.slice(1, 3), 16) * (1 - t) + target * t);
+  const g = Math.round(parseInt(hex.slice(3, 5), 16) * (1 - t) + target * t);
+  const b = Math.round(parseInt(hex.slice(5, 7), 16) * (1 - t) + target * t);
+  return `rgb(${r},${g},${b})`;
+}
+const lighten = (hex: string, t: number) => mixHex(hex, 255, t);
+const darken  = (hex: string, t: number) => mixHex(hex, 0, t);
 
 // ── Canvas ────────────────────────────────────────────────────────────────────
 const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
@@ -196,6 +221,82 @@ let currentShape: Shape = 'circle';
 
 type DotObs = { x: number; y: number; r: number; vx: number; vy: number; spin: number; shape: Shape };
 let obstacles: DotObs[] = [];
+
+// ── Pseudo-3D 스프라이트 캐시 (볼륨 그라데이션 + 림라이트 + 스펙큘러 + AO 섀도) ──
+const SPR = 160, SPR_C = 80, SPR_U = 48; // 스프라이트 크기 / 중심 / 단위 반지름(px)
+const spriteCache = new Map<string, HTMLCanvasElement>();
+
+function shapePath(c: CanvasRenderingContext2D, shape: Shape | 'sphere', u: number) {
+  c.beginPath();
+  switch (shape) {
+    case 'sphere':
+    case 'circle': c.arc(0, 0, u, 0, Math.PI * 2); break;
+    case 'square': { const s = u * 1.5; c.rect(-s, -s, s * 2, s * 2); break; }
+    case 'triangle': {
+      const h = u * 1.6;
+      c.moveTo(0, -h); c.lineTo(h * 0.866, h * 0.5); c.lineTo(-h * 0.866, h * 0.5); c.closePath(); break;
+    }
+    case 'diamond': {
+      const d = u * 1.5;
+      c.moveTo(0, -d); c.lineTo(d, 0); c.lineTo(0, d); c.lineTo(-d, 0); c.closePath(); break;
+    }
+  }
+}
+
+function getBodySprite(shape: Shape | 'sphere', color: string): HTMLCanvasElement {
+  const key = `${shape}|${color}`;
+  const hit = spriteCache.get(key);
+  if (hit) return hit;
+  const cv = document.createElement('canvas'); cv.width = SPR; cv.height = SPR;
+  const c = cv.getContext('2d')!;
+  c.translate(SPR_C, SPR_C);
+  // 좌상단 광원 볼륨 셰이딩
+  const g = c.createRadialGradient(-SPR_U * 0.4, -SPR_U * 0.45, SPR_U * 0.1, 0, 0, SPR_U * 1.75);
+  g.addColorStop(0, lighten(color, 0.55));
+  g.addColorStop(0.35, lighten(color, 0.18));
+  g.addColorStop(0.75, color);
+  g.addColorStop(1, darken(color, 0.3));
+  shapePath(c, shape, SPR_U);
+  c.fillStyle = g; c.fill();
+  // 림라이트
+  shapePath(c, shape, SPR_U);
+  c.strokeStyle = 'rgba(255,255,255,0.28)'; c.lineWidth = 2.5; c.stroke();
+  // 스펙큘러 하이라이트
+  c.save();
+  shapePath(c, shape, SPR_U); c.clip();
+  c.beginPath(); c.ellipse(-SPR_U * 0.38, -SPR_U * 0.45, SPR_U * 0.3, SPR_U * 0.18, -0.6, 0, Math.PI * 2);
+  c.fillStyle = 'rgba(255,255,255,0.5)'; c.fill();
+  c.restore();
+  spriteCache.set(key, cv);
+  return cv;
+}
+
+function getShadowSprite(): HTMLCanvasElement {
+  const hit = spriteCache.get('shadow');
+  if (hit) return hit;
+  const cv = document.createElement('canvas'); cv.width = SPR; cv.height = SPR;
+  const c = cv.getContext('2d')!;
+  const g = c.createRadialGradient(SPR_C, SPR_C, 0, SPR_C, SPR_C, SPR_C * 0.72);
+  g.addColorStop(0, 'rgba(15,20,30,0.32)');
+  g.addColorStop(0.6, 'rgba(15,20,30,0.14)');
+  g.addColorStop(1, 'rgba(15,20,30,0)');
+  c.fillStyle = g; c.fillRect(0, 0, SPR, SPR);
+  spriteCache.set('shadow', cv);
+  return cv;
+}
+
+// extent = 시각 반경(px). 광원 좌상단 → 그림자는 우하단 오프셋으로 호출부에서 지정
+function drawShadow(x: number, y: number, extent: number, alpha: number) {
+  const d = extent * 3.8;
+  ctx.globalAlpha = alpha;
+  ctx.drawImage(getShadowSprite(), x - d / 2, y - d / 2, d, d);
+  ctx.globalAlpha = 1;
+}
+
+function drawBody(shape: Shape | 'sphere', color: string, x: number, y: number, r: number) {
+  const k = r / SPR_U;
+  ctx.drawImage(getBodySprite(shape, color), x - SPR_C * k, y - SPR_C * k, SPR * k, SPR * k);
+}
 
 // ── 특수 장애물 (시간 경과 해금) ──────────────────────────────────────────────
 type SpecialType = 'homing' | 'blade' | 'laser' | 'mine';
@@ -386,23 +487,16 @@ function updateObs(dt: number) {
 }
 
 function drawObs() {
-  ctx.fillStyle = gameColor;
+  // 섀도 패스 (AO — 우하단 오프셋) → 바디 패스 (2패스라 그림자가 바디를 덮지 않음)
+  const sh = getShadowSprite();
+  ctx.globalAlpha = 0.28;
   for (const o of obstacles) {
-    ctx.beginPath();
-    switch (o.shape) {
-      case 'circle':   ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2); break;
-      case 'square':   { const s = o.r * 1.5; ctx.rect(o.x - s, o.y - s, s * 2, s * 2); break; }
-      case 'triangle': {
-        const h = o.r * 1.6;
-        ctx.moveTo(o.x, o.y - h); ctx.lineTo(o.x + h * 0.866, o.y + h * 0.5); ctx.lineTo(o.x - h * 0.866, o.y + h * 0.5); ctx.closePath(); break;
-      }
-      case 'diamond': {
-        const d = o.r * 1.5;
-        ctx.moveTo(o.x, o.y - d); ctx.lineTo(o.x + d, o.y); ctx.lineTo(o.x, o.y + d); ctx.lineTo(o.x - d, o.y); ctx.closePath(); break;
-      }
-    }
-    ctx.fill();
+    const e = o.r * (o.shape === 'circle' ? 1 : 1.45);
+    const d = e * 3.4;
+    ctx.drawImage(sh, o.x + o.r * 0.22 + 2 - d / 2, o.y + o.r * 0.3 + 3 - d / 2, d, d);
   }
+  ctx.globalAlpha = 1;
+  for (const o of obstacles) drawBody(o.shape, gameColor, o.x, o.y, o.r);
 }
 
 function collidesObs(dot: { x: number; y: number; r: number }, o: DotObs): boolean {
@@ -437,7 +531,7 @@ function updateSpecials(dt: number) {
       o.x += o.vx * dt * 60; o.y += o.vy * dt * 60;
       if (o.life !== undefined && Math.hypot(o.vx, o.vy) < 0.1) {
         o.life -= dt;
-        if (o.life <= 0 && !o.exploded) { o.exploded = true; o.blastR = 0; triggerShake(0.6); ait?.generateHapticFeedback({ type: 'error' }).catch(() => {}); }
+        if (o.life <= 0 && !o.exploded) { o.exploded = true; o.blastR = 0; triggerShake(0.6); sparkBurst(o.x, o.y, gameColor, 14, 2, 8); haptic('error'); }
       }
       if (o.exploded && o.blastR !== undefined) o.blastR += dt * 320;
     }
@@ -448,13 +542,27 @@ function updateSpecials(dt: number) {
   });
 }
 
+// 로컬 좌표(중심 0,0) 볼륨 그라데이션 — 특수 장애물 수가 적어 프레임당 생성 허용
+function localGrad(r: number): CanvasGradient {
+  const g = ctx.createRadialGradient(-r * 0.4, -r * 0.45, r * 0.1, 0, 0, r * 1.7);
+  g.addColorStop(0, lighten(gameColor, 0.5));
+  g.addColorStop(0.4, lighten(gameColor, 0.15));
+  g.addColorStop(0.8, gameColor);
+  g.addColorStop(1, darken(gameColor, 0.28));
+  return g;
+}
+
 function drawSpecials() {
   for (const o of specials) {
+    // AO 섀도 (레이저/폭발 링 제외)
+    if (o.k !== 'laser' && !(o.k === 'mine' && o.exploded)) {
+      drawShadow(o.x + o.r * 0.25 + 2, o.y + o.r * 0.35 + 3, o.r * (o.k === 'mine' ? 1.4 : 1.1), 0.3);
+    }
     ctx.save();
     ctx.translate(o.x, o.y); ctx.rotate(o.rot);
     if (o.k === 'homing') {
       ctx.beginPath(); ctx.arc(0, 0, o.r, 0, Math.PI * 2);
-      ctx.fillStyle = gameColor; ctx.fill();
+      ctx.fillStyle = localGrad(o.r); ctx.fill();
       ctx.beginPath(); ctx.arc(0, 0, o.r + 3, 0, Math.PI * 2);
       ctx.strokeStyle = '#FF2D78'; ctx.lineWidth = 1.5; ctx.stroke();
     } else if (o.k === 'blade') {
@@ -466,7 +574,7 @@ function drawSpecials() {
         i === 0 ? ctx.moveTo(Math.cos(angle) * r2, Math.sin(angle) * r2)
                 : ctx.lineTo(Math.cos(angle) * r2, Math.sin(angle) * r2);
       }
-      ctx.closePath(); ctx.fillStyle = gameColor; ctx.fill();
+      ctx.closePath(); ctx.fillStyle = localGrad(o.r); ctx.fill();
       ctx.beginPath(); ctx.arc(0, 0, ir * 0.45, 0, Math.PI * 2);
       ctx.fillStyle = '#ffffff'; ctx.fill();
     } else if (o.k === 'laser') {
@@ -537,6 +645,7 @@ function drawPickups() {
     const pulse = 1 + Math.sin(Date.now() * 0.008) * 0.12;
     const r     = p.r * pulse;
     const alpha = Math.min(1, p.life * 0.7);
+    drawShadow(p.x + r * 0.2 + 2, p.y + r * 0.3 + 3, r, 0.2 * alpha);
     ctx.save();
     ctx.globalAlpha = alpha;
 
@@ -558,6 +667,7 @@ function drawPickups() {
 }
 
 function collectPickup(p: Pickup) {
+  // 실시간 픽업은 진동 금지 (코인) — 시각 팝 + 스파크로 대체. 파워업만 굵은 이벤트 햅틱
   if (p.k === 'coin') {
     coinCombo++;
     coinComboTimer = 3.0;
@@ -565,20 +675,16 @@ function collectPickup(p: Pickup) {
     const earned = 1 + bonus;
     sessionCoins += earned; totalCoins += earned; saveCoins(totalCoins);
     document.getElementById('sessionCoinVal')!.textContent = String(sessionCoins);
-    ait?.generateHapticFeedback({ type: 'success' }).catch(() => {});
+    sparkBurst(p.x, p.y, '#FFB300', 4, 1.5, 4);
+    squashImpulse(0.7);
     if (coinCombo >= 3) toast = { text: `🟡 COMBO ×${coinCombo}${bonus > 0 ? ` +${bonus}!` : '!'}`, alpha: 1, y: H * 0.42 };
-  } else if (p.k === 'shield') {
-    shieldActive = true;
-    ait?.generateHapticFeedback({ type: 'success' }).catch(() => {});
-  } else if (p.k === 'slowmo') {
-    slowmoActiveT = SLOWMO_DUR;
-    ait?.generateHapticFeedback({ type: 'success' }).catch(() => {});
-  } else if (p.k === 'magnet') {
-    magnetActiveT = MAGNET_DUR;
-    ait?.generateHapticFeedback({ type: 'success' }).catch(() => {});
-  } else if (p.k === 'ghost') {
-    ghostActiveT = GHOST_DUR;
-    ait?.generateHapticFeedback({ type: 'success' }).catch(() => {});
+  } else {
+    if      (p.k === 'shield') shieldActive  = true;
+    else if (p.k === 'slowmo') slowmoActiveT = SLOWMO_DUR;
+    else if (p.k === 'magnet') magnetActiveT = MAGNET_DUR;
+    else if (p.k === 'ghost')  ghostActiveT  = GHOST_DUR;
+    squashImpulse(1.2);
+    haptic('success');
   }
 }
 
@@ -604,7 +710,7 @@ function updatePowerupHUD() {
 let shakeIntensity = 0, shakeX = 0, shakeY = 0;
 let gameTime  = 0, nextWave  = 15, waveGrace = 0, waveHintAlpha = 0, waveCount = 0;
 
-function triggerShake(intensity: number) { shakeIntensity = Math.max(shakeIntensity, intensity); }
+function triggerShake(intensity: number) { if (reducedMotion) return; shakeIntensity = Math.max(shakeIntensity, intensity); }
 
 function updateShake(dt: number) {
   if (shakeIntensity > 0) {
@@ -622,7 +728,7 @@ function triggerWave() {
   gameColor = COLORS[colorIdx]; currentShape = SHAPES[colorIdx]; applyColor();
   triggerShake(0.6);
   toast = { text: `✦ WAVE ${waveCount + 1}`, alpha: 1, y: H * 0.38 };
-  ait?.generateHapticFeedback({ type: 'basicMedium' }).catch(() => {});
+  haptic('basicMedium');
   const pulseEl = document.getElementById('dirPulse')!;
   pulseEl.classList.remove('pulse');
   void (pulseEl as HTMLElement).offsetWidth;
@@ -656,12 +762,84 @@ const auto = {
 // ── Player ────────────────────────────────────────────────────────────────────
 const player = { x: 0, y: 0, r: 6 };
 
+// ── 플레이어 시각 물리 (프레젠테이션 전용 — 판정은 player.x/y 그대로) ─────────
+// 관성 오프셋은 8px 클램프: 시각이 판정 위치를 크게 속이지 않게
+const pvis = {
+  ox: 0, oy: 0, ovx: 0, ovy: 0, // 관성 오프셋 + 스프링 속도
+  vex: 0, vey: 0,               // 속도 추정 (스트레치 방향)
+  sq: 0, sqv: 0,                // 스쿼시 감쇠 스프링
+  px: 0, py: 0,                 // 이전 논리 위치
+  reset() {
+    this.ox = this.oy = this.ovx = this.ovy = 0;
+    this.vex = this.vey = this.sq = this.sqv = 0;
+    this.px = player.x; this.py = player.y;
+  },
+};
+// v≈1.0 → 스케일 피크 +0.07 (ω=17.9, ζ=0.45 기준)
+function squashImpulse(v: number) { if (!reducedMotion) pvis.sqv += v * 2; }
+
+function updatePlayerVisual(dt: number) {
+  const dx = player.x - pvis.px, dy = player.y - pvis.py;
+  pvis.px = player.x; pvis.py = player.y;
+  if (dt <= 0) return;
+  const a = 1 - Math.exp(-dt * 12);
+  pvis.vex += (dx / dt - pvis.vex) * a;
+  pvis.vey += (dy / dt - pvis.vey) * a;
+  if (reducedMotion) { pvis.ox = pvis.oy = 0; pvis.sq = 0; return; }
+  // 관성: 이동분 일부를 시각 오프셋으로 흡수 → 감쇠 스프링 복원 (오버슛 허용)
+  pvis.ox -= dx * 0.42; pvis.oy -= dy * 0.42;
+  const K = 340, C = 2 * Math.sqrt(K) * 0.62;
+  pvis.ovx += (-K * pvis.ox - C * pvis.ovx) * dt;
+  pvis.ovy += (-K * pvis.oy - C * pvis.ovy) * dt;
+  pvis.ox += pvis.ovx * dt; pvis.oy += pvis.ovy * dt;
+  const om = Math.hypot(pvis.ox, pvis.oy), OMAX = 8;
+  if (om > OMAX) { pvis.ox *= OMAX / om; pvis.oy *= OMAX / om; }
+  // 스쿼시 스프링
+  const KS = 320, CS = 2 * Math.sqrt(KS) * 0.45;
+  pvis.sqv += (-KS * pvis.sq - CS * pvis.sqv) * dt;
+  pvis.sq += pvis.sqv * dt;
+}
+
+function drawPlayer(alpha: number) {
+  const x = player.x + pvis.ox, y = player.y + pvis.oy, r = player.r;
+  const spd = Math.hypot(pvis.vex, pvis.vey);
+  const stretch = reducedMotion ? 0 : Math.min(spd / 1600, 1) * 0.2;
+  const sq = reducedMotion ? 0 : pvis.sq;
+  const sx = clamp(1 + stretch + sq, 0.8, 1.22);
+  const sy = clamp(1 - stretch * 0.6 + sq, 0.8, 1.22);
+  const ang = Math.atan2(pvis.vey, pvis.vex);
+  drawShadow(x + r * 0.25 + 2, y + r * 0.35 + 3, r, 0.34 * alpha);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  // 속도축 스트레치: R(a)·S·R(-a) — 스프라이트 방향은 유지, 스케일 축만 회전
+  ctx.translate(x, y); ctx.rotate(ang); ctx.scale(sx, sy); ctx.rotate(-ang);
+  drawBody('sphere', getPlayerColor(), 0, 0, r);
+  ctx.restore();
+}
+
+// 스피드 모션 트레일 (스킨 트레일과 별개, 속도 비례 잔상)
+function drawSpeedTrail(alpha: number) {
+  if (reducedMotion) return;
+  const spd = Math.hypot(pvis.vex, pvis.vey);
+  if (spd < 260) return;
+  const pc = getPlayerColor(), n = posHistory.length;
+  const idxs = [4, 9, 15];
+  for (let i = 0; i < idxs.length; i++) {
+    const p = posHistory[n - 1 - idxs[i]];
+    if (!p) continue;
+    ctx.globalAlpha = alpha * (0.1 - i * 0.03) * Math.min(spd / 900, 1);
+    ctx.fillStyle = pc;
+    ctx.beginPath(); ctx.arc(p.x, p.y, player.r * (0.85 - i * 0.15), 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
 function getPlayerR(): number {
   if (score < 20)  return 6;  if (score < 50)  return 8;
   if (score < 90)  return 10; if (score < 140) return 12;
   return 14;
 }
-function resetPlayer() { player.x = W * 0.5; player.y = H * 0.5; player.r = 6; }
+function resetPlayer() { player.x = W * 0.5; player.y = H * 0.5; player.r = 6; pvis.reset(); }
 
 // ── Trail ─────────────────────────────────────────────────────────────────────
 type TrailDot = { x: number; y: number; r: number; life: number; color: string };
@@ -672,12 +850,12 @@ const POS_HISTORY_MAX = 30;
 function updateTrail(dt: number) {
   const style = getTrailStyle();
   const pc    = getPlayerColor();
+  const vx = player.x + pvis.ox, vy = player.y + pvis.oy;
   if (style === 'comet') {
-    trailDots.push({ x: player.x, y: player.y, r: player.r * 0.85, life: 1, color: pc });
-  } else if (style === 'shadow') {
-    posHistory.push({ x: player.x, y: player.y });
-    if (posHistory.length > POS_HISTORY_MAX) posHistory.shift();
+    trailDots.push({ x: vx, y: vy, r: player.r * 0.85, life: 1, color: pc });
   }
+  posHistory.push({ x: vx, y: vy }); // 스피드 트레일 + shadow 스킨 공용
+  if (posHistory.length > POS_HISTORY_MAX) posHistory.shift();
   for (const t of trailDots) t.life -= dt * 4;
   trailDots = trailDots.filter(t => t.life > 0);
 }
@@ -702,25 +880,90 @@ function drawTrail() {
   }
 }
 
-// ── Particles ─────────────────────────────────────────────────────────────────
-type Particle = { x: number; y: number; vx: number; vy: number; r: number; life: number; decay: number };
+// ── Particles (중력 + 화면 에지 바운스, restitution 0.38~0.52) ────────────────
+type Particle = { x: number; y: number; vx: number; vy: number; r: number; life: number; decay: number; rest: number; color?: string };
 let particles: Particle[] = [];
 
 function explode(x: number, y: number) {
   for (let i = 0; i < 32; i++) {
     const a = Math.random() * Math.PI * 2, spd = rand(1, 7);
-    particles.push({ x, y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, r: rand(1, 3), life: 1, decay: rand(0.012, 0.025) });
+    particles.push({ x, y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, r: rand(1, 3), life: 1, decay: rand(0.012, 0.025), rest: rand(0.38, 0.52) });
+  }
+}
+function sparkBurst(x: number, y: number, color: string, n: number, spd0: number, spd1: number) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2, spd = rand(spd0, spd1);
+    particles.push({ x, y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd - 1.2, r: rand(1, 2.5), life: 1, decay: rand(0.02, 0.04), rest: rand(0.38, 0.52), color });
   }
 }
 function updateParticles(dt: number) {
   const s = dt * 60;
-  for (const p of particles) { p.x += p.vx * s; p.y += p.vy * s; p.vy += 0.18 * s; p.vx *= Math.pow(0.96, s); p.vy *= Math.pow(0.96, s); p.life -= p.decay * s; }
+  for (const p of particles) {
+    p.x += p.vx * s; p.y += p.vy * s;
+    p.vy += 0.22 * s;
+    p.vx *= Math.pow(0.96, s); p.vy *= Math.pow(0.96, s);
+    if (p.y > H - p.r && p.vy > 0) { p.y = H - p.r; p.vy *= -p.rest; p.vx *= 0.82; }
+    if (p.x < p.r && p.vx < 0)     { p.x = p.r;     p.vx *= -p.rest; }
+    if (p.x > W - p.r && p.vx > 0) { p.x = W - p.r; p.vx *= -p.rest; }
+    p.life -= p.decay * s;
+  }
   particles = particles.filter(p => p.life > 0);
 }
 function drawParticles() {
-  ctx.fillStyle = gameColor;
-  for (const p of particles) { ctx.globalAlpha = p.life * p.life; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill(); }
+  for (const p of particles) {
+    ctx.globalAlpha = p.life * p.life;
+    ctx.fillStyle = p.color ?? gameColor;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+  }
   ctx.globalAlpha = 1;
+}
+
+// ── 쇼크링 (니어미스/피격 임팩트) ────────────────────────────────────────────
+type ShockRing = { x: number; y: number; r: number; vr: number; alpha: number; color?: string };
+let shockRings: ShockRing[] = [];
+function spawnShockRing(x: number, y: number, r0: number, vr: number, alpha: number, color?: string) {
+  shockRings.push({ x, y, r: r0, vr, alpha, color });
+}
+function updateShockRings(dt: number) {
+  for (const s of shockRings) { s.r += s.vr * dt; s.alpha -= dt * 2.2; }
+  shockRings = shockRings.filter(s => s.alpha > 0);
+}
+function drawShockRings() {
+  for (const s of shockRings) {
+    ctx.globalAlpha = Math.max(0, s.alpha);
+    ctx.strokeStyle = s.color ?? gameColor;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ── 공간 깊이: 패럴랙스 그리드 + 다이내믹 비네트 ─────────────────────────────
+let vinX = 0, vinY = 0;
+function drawEnvironment(fx: number, fy: number) {
+  const layers: [number, number, string][] = [
+    [88, 0.028, 'rgba(20,26,40,0.03)'],
+    [176, 0.055, 'rgba(20,26,40,0.05)'],
+  ];
+  for (const [gap, f, col] of layers) {
+    const ox = (-fx * f) % gap, oy = (-fy * f) % gap;
+    ctx.strokeStyle = col; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = ox - gap; x < W + gap; x += gap) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+    for (let y = oy - gap; y < H + gap; y += gap) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
+    ctx.stroke();
+  }
+}
+function drawVignette(fx: number, fy: number, dt: number) {
+  // 광원이 플레이어를 따라오는 다이내믹 라이팅 — 초점에서 멀수록 어둡게, 위험도에 반응
+  const a = 1 - Math.exp(-dt * 5);
+  vinX += (fx - vinX) * a; vinY += (fy - vinY) * a;
+  const base = 0.05 + Math.min(dangerCounter, 10) * 0.006 + nearMissFlash * 0.05;
+  const R = Math.hypot(W, H) * 0.75;
+  const g = ctx.createRadialGradient(vinX, vinY, R * 0.25, vinX, vinY, R);
+  g.addColorStop(0, 'rgba(10,14,26,0)');
+  g.addColorStop(1, `rgba(10,14,26,${base.toFixed(3)})`);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
 }
 
 // ── Score & Milestone ─────────────────────────────────────────────────────────
@@ -775,7 +1018,7 @@ function tickScore(dt: number) {
     multEl.style.display = 'none';
   }
   while (milestoneIdx < MILESTONES.length && score >= MILESTONES[milestoneIdx]) {
-    if (prev < MILESTONES[milestoneIdx]) { toast = { text: MILESTONES[milestoneIdx] + 's !', alpha: 1, y: H * 0.38 }; ait?.generateHapticFeedback({ type: 'confetti' }).catch(() => {}); }
+    if (prev < MILESTONES[milestoneIdx]) { toast = { text: MILESTONES[milestoneIdx] + 's !', alpha: 1, y: H * 0.38 }; haptic('confetti'); }
     milestoneIdx++;
   }
   checkUnlocks();
@@ -812,7 +1055,7 @@ function startCoinStage() {
   coinStageObsTimer = 0;
   obstacles = []; specials = [];
   toast = { text: '🟡 COIN WAVE!', alpha: 1, y: H * 0.38 };
-  ait?.generateHapticFeedback({ type: 'confetti' }).catch(() => {});
+  haptic('confetti');
 }
 
 function updateFlyingCoins(dt: number) {
@@ -831,6 +1074,7 @@ function drawFlyingCoins() {
   for (const c of flyingCoins) {
     const pulse = 1 + Math.sin(Date.now() * 0.01 + c.x) * 0.1;
     const r = c.r * pulse;
+    drawShadow(c.x + r * 0.2 + 2, c.y + r * 0.3 + 3, r, 0.18);
     ctx.save();
     if (img.complete && img.naturalWidth > 0) {
       ctx.drawImage(img, c.x - r, c.y - r, r * 2, r * 2);
@@ -896,7 +1140,7 @@ function spawnTick(dt: number) {
       specialTimer = 0;
       nextSpecialInterval = rand(Math.max(8, 18 - diff * 2), Math.max(12, 25 - diff * 2));
       specials.push(makeSpecial());
-      ait?.generateHapticFeedback({ type: 'basicMedium' }).catch(() => {});
+      haptic('basicMedium');
     }
   }
   pickupTimer += dt;
@@ -983,8 +1227,8 @@ let zoomT = 0, ZOOM_DUR = 0.85, zoomFX = 0, zoomFY = 0, deadT = 0;
 
 // ── Draw Helpers ──────────────────────────────────────────────────────────────
 function drawDot(x: number, y: number, r: number, color?: string) {
-  ctx.fillStyle = color ?? gameColor;
-  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  drawShadow(x + r * 0.25 + 2, y + r * 0.35 + 3, r, 0.32);
+  drawBody('sphere', color ?? gameColor, x, y, r);
 }
 
 function drawHintArea() {
@@ -1054,13 +1298,16 @@ function loop(ts: number) {
     if (introObsTimer > 1.1) { introObsTimer = 0; obstacles.push(makeObs(true)); }
     updateObs(rawDt); auto.update(rawDt);
     ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H);
+    drawEnvironment(auto.x, auto.y);
     drawObs(); drawDot(auto.x, auto.y, auto.r);
+    drawVignette(auto.x, auto.y, rawDt);
   }
   else if (state === S.ZOOM) {
     zoomT += rawDt / ZOOM_DUR;
     updateObs(rawDt); auto.update(rawDt);
     const t = easeOut(Math.min(zoomT, 1)), scale = 1 + t * 14;
     ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H);
+    drawEnvironment(auto.x, auto.y);
     ctx.save(); ctx.translate(W / 2, H / 2); ctx.scale(scale, scale); ctx.translate(-zoomFX, -zoomFY);
     drawObs(); drawDot(auto.x, auto.y, auto.r); ctx.restore();
     if (t > 0.55) { ctx.fillStyle = `rgba(255,255,255,${(t - 0.55) / 0.45})`; ctx.fillRect(0, 0, W, H); }
@@ -1081,6 +1328,9 @@ function loop(ts: number) {
     updatePickups(dt);
     updateFlyingCoins(dt);
     updateShake(dt);
+    updatePlayerVisual(rawDt);
+    updateParticles(rawDt);
+    updateShockRings(rawDt);
     updateTrail(rawDt);
     updateToast(rawDt);
     updateUnlockToast(rawDt);
@@ -1107,7 +1357,8 @@ function loop(ts: number) {
         flyingCoins.splice(i, 1);
         sessionCoins++; totalCoins++; saveCoins(totalCoins);
         document.getElementById('sessionCoinVal')!.textContent = String(sessionCoins);
-        ait?.generateHapticFeedback({ type: 'success' }).catch(() => {});
+        sparkBurst(c.x, c.y, '#FFB300', 2, 1, 3); // 픽업당 진동 금지 — 시각 팝만
+        squashImpulse(0.5);
       }
     }
 
@@ -1117,10 +1368,14 @@ function loop(ts: number) {
       if (hit) {
         if (shieldActive) {
           shieldActive = false; invincibleT = 1.0; triggerShake(0.5);
-          ait?.generateHapticFeedback({ type: 'error' }).catch(() => {});
+          spawnShockRing(player.x, player.y, player.r + 6, 380, 0.55, '#3182F6');
+          squashImpulse(-1.4);
+          haptic('error');
         } else {
           explode(player.x, player.y);
-          ait?.generateHapticFeedback({ type: 'error' }).catch(() => {});
+          spawnShockRing(player.x, player.y, player.r + 4, 420, 0.6);
+          triggerShake(1.0);
+          haptic('error');
           state = S.DEAD; deadT = 0;
         }
       }
@@ -1136,17 +1391,26 @@ function loop(ts: number) {
     }
     if (nearMissCooldown <= 0 && invincibleT <= 0 && ghostActiveT <= 0 && state === S.PLAY) {
       const NEAR_DIST = 20;
-      let closestGap = Infinity;
+      let closestGap = Infinity, closestObs: DotObs | null = null;
       for (const o of obstacles) {
         const gap = Math.hypot(player.x - o.x, player.y - o.y) - player.r - o.r;
-        if (gap > 0 && gap < NEAR_DIST) closestGap = Math.min(closestGap, gap);
+        if (gap > 0 && gap < NEAR_DIST && gap < closestGap) { closestGap = gap; closestObs = o; }
       }
-      if (closestGap < NEAR_DIST) {
+      if (closestObs) {
         nearMissCooldown = 0.35;
         nearMissFlash    = 1.0;
         dangerCounter    = Math.min(10, dangerCounter + 1);
         dangerDecayTimer = 0;
-        ait?.generateHapticFeedback({ type: 'basicMedium' }).catch(() => {});
+        // 스칠 때 연출: 접점 쇼크링 + 스파크 + 스쿼시 + 셰이크 미러링 + 햅틱 (같은 프레임)
+        const o = closestObs;
+        const d = Math.hypot(player.x - o.x, player.y - o.y) || 1;
+        const cx2 = o.x + (player.x - o.x) / d * o.r;
+        const cy2 = o.y + (player.y - o.y) / d * o.r;
+        spawnShockRing(cx2, cy2, 4, 300, 0.45);
+        sparkBurst(cx2, cy2, gameColor, 5, 1.5, 4.5);
+        squashImpulse(0.9);
+        triggerShake(0.12);
+        haptic('basicMedium');
         const mult = (1 + dangerCounter * 0.2).toFixed(1);
         toast = { text: dangerCounter >= 3 ? `CLOSE! ×${mult}` : 'CLOSE!', alpha: 1, y: H * 0.42 };
       }
@@ -1155,11 +1419,17 @@ function loop(ts: number) {
     const ghostAlpha  = ghostActiveT > 0 ? 0.4 : 1;
     const showPlayer  = invincibleT <= 0 || Math.floor(invincibleT * 8) % 2 === 0;
 
+    const pvx = player.x + pvis.ox, pvy = player.y + pvis.oy;
+
     ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H);
     ctx.save(); ctx.translate(shakeX, shakeY);
+    drawEnvironment(pvx, pvy);
     drawTrail();
+    drawSpeedTrail(showPlayer ? ghostAlpha : 0);
     drawObs();
     drawSpecials();
+    drawParticles();
+    drawShockRings();
     drawPickups();
     drawFlyingCoins();
     drawWaveFlash();
@@ -1178,7 +1448,7 @@ function loop(ts: number) {
         ctx.strokeStyle    = getPlayerColor();
         ctx.lineWidth      = 1.5 + nearMissFlash * 1.5;
         ctx.shadowBlur     = 12; ctx.shadowColor = getPlayerColor();
-        ctx.beginPath(); ctx.arc(player.x, player.y, ringR, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(pvx, pvy, ringR, 0, Math.PI * 2); ctx.stroke();
         ctx.restore();
       }
       // Ghost: 크로마틱 어버레이션
@@ -1187,23 +1457,26 @@ function loop(ts: number) {
         ctx.save();
         ctx.globalAlpha = ghostAlpha * 0.45;
         ctx.fillStyle = '#FF2D78';
-        ctx.beginPath(); ctx.arc(player.x - off, player.y, player.r, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(pvx - off, pvy, player.r, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = '#00F0FF';
-        ctx.beginPath(); ctx.arc(player.x + off, player.y, player.r, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(pvx + off, pvy, player.r, 0, Math.PI * 2); ctx.fill();
         ctx.restore();
       }
-      ctx.globalAlpha = ghostAlpha;
-      drawDot(player.x, player.y, player.r, getPlayerColor());
-      ctx.globalAlpha = 1;
+      drawPlayer(ghostAlpha);
     }
     ctx.restore();
+    drawVignette(player.x, player.y, rawDt);
     drawHintArea();
   }
   else if (state === S.DEAD) {
     deadT += rawDt;
-    updateObs(rawDt); updateSpecials(rawDt); updateParticles(rawDt);
+    updateObs(rawDt); updateSpecials(rawDt); updateParticles(rawDt); updateShake(rawDt); updateShockRings(rawDt);
     ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H);
-    drawObs(); drawSpecials(); drawParticles();
+    drawEnvironment(player.x, player.y);
+    ctx.save(); ctx.translate(shakeX, shakeY);
+    drawObs(); drawSpecials(); drawParticles(); drawShockRings();
+    ctx.restore();
+    drawVignette(player.x, player.y, rawDt);
     if (deadT > 1.8) { state = S.OVER; showGameOver(); }
   }
   else if (state === S.OVER) { ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H); }
@@ -1221,7 +1494,7 @@ function startZoom() {
 let invincibleT = 0, hasContinued = false;
 
 function startGame() {
-  obstacles = []; specials = []; pickups = []; particles = []; trailDots = []; posHistory = []; flyingCoins = [];
+  obstacles = []; specials = []; pickups = []; particles = []; trailDots = []; posHistory = []; flyingCoins = []; shockRings = [];
   score = 0; scoreF = 0;
   obsTimer = 0; specialTimer = 0; pickupTimer = 0; patternTimer = 0;
   nextSpecialInterval = rand(8, 12);
@@ -1265,7 +1538,7 @@ async function showGameOver() {
 }
 
 function resetToIntro() {
-  obstacles = []; specials = []; particles = []; trailDots = []; posHistory = []; flyingCoins = [];
+  obstacles = []; specials = []; particles = []; trailDots = []; posHistory = []; flyingCoins = []; shockRings = [];
   coinStageActive = false;
   auto.reset(); introObsTimer = 0;
   scoreEl.style.display = 'none';
@@ -1280,7 +1553,7 @@ let adLoaded = false;
 function continueGame() {
   hasContinued = true;
   document.getElementById('gameOver')!.classList.remove('show');
-  obstacles = []; specials = []; particles = []; trailDots = []; posHistory = [];
+  obstacles = []; specials = []; particles = []; trailDots = []; posHistory = []; shockRings = [];
   obsTimer = 0; specialTimer = 0; waveGrace = 1.5; invincibleT = 2.0; hintAlpha = 0;
   resetPlayer(); state = S.PLAY;
   preloadAitAd(); preloadAd();
@@ -1342,22 +1615,25 @@ function showAdFallback(onComplete: () => void) {
   }, 1000);
 }
 
-// ── 버튼 ─────────────────────────────────────────────────────────────────────
-document.getElementById('startBtn')!.addEventListener('click', startZoom);
-document.getElementById('continueBtn')!.addEventListener('click', () => { showAitAd(continueGame); });
+// ── 버튼 (탭당 햅틱 1개) ──────────────────────────────────────────────────────
+document.getElementById('startBtn')!.addEventListener('click', () => { haptic('tap'); startZoom(); });
+document.getElementById('continueBtn')!.addEventListener('click', () => { haptic('tap'); showAitAd(continueGame); });
 document.getElementById('doubleCoinsBtn')!.addEventListener('click', () => {
+  haptic('tap');
   showRewardAd(() => {
     totalCoins += sessionCoins; saveCoins(totalCoins);
     document.getElementById('doubleCoinsBtn')!.style.display = 'none';
     const el = document.querySelector('.go-coins')!;
     (el as HTMLElement).innerHTML = `2배 획득! 🟡 <span id="goCoins">${sessionCoins * 2}</span>`;
-    ait?.generateHapticFeedback({ type: 'success' }).catch(() => {});
+    haptic('success');
   });
 });
 document.getElementById('retryBtn')!.addEventListener('click', () => {
+  haptic('tap');
   document.getElementById('gameOver')!.classList.remove('show'); resetToIntro();
 });
 document.getElementById('leaderboardBtn')!.addEventListener('click', async () => {
+  haptic('tap');
   try { await ait?.openGameCenterLeaderboard(); if (!ait) throw new Error(); }
   catch {
     const text = `Dodge Dot에서 ${score}초 버텼어요 🔴 사방에서 날아오는 점을 피할 수 있어?`;
@@ -1375,16 +1651,17 @@ function hideTutorial() {
   document.getElementById('tutorialModal')!.classList.remove('show');
   localStorage.setItem(KEY_TUTORIAL, '1');
 }
-document.getElementById('tutorialCloseBtn')!.addEventListener('click', hideTutorial);
-document.getElementById('tutorialBtn')!.addEventListener('click', showTutorial);
+document.getElementById('tutorialCloseBtn')!.addEventListener('click', () => { haptic('tap'); hideTutorial(); });
+document.getElementById('tutorialBtn')!.addEventListener('click', () => { haptic('tap'); showTutorial(); });
 // 최초 1회 자동 표시
 if (!localStorage.getItem(KEY_TUTORIAL)) showTutorial();
 
 // ── 종료 확인 ──────────────────────────────────────────────────────────────────
 history.pushState({ dodgedot: true }, '');
 window.addEventListener('popstate', () => { history.pushState({ dodgedot: true }, ''); document.getElementById('closeConfirm')!.classList.add('show'); });
-document.getElementById('closeNo')!.addEventListener('click',  () => { document.getElementById('closeConfirm')!.classList.remove('show'); });
+document.getElementById('closeNo')!.addEventListener('click',  () => { haptic('tap'); document.getElementById('closeConfirm')!.classList.remove('show'); });
 document.getElementById('closeYes')!.addEventListener('click', () => {
+  haptic('tap');
   document.getElementById('closeConfirm')!.classList.remove('show');
   import('@apps-in-toss/web-framework').then((m: any) => m.closeView?.()).catch(() => history.go(-2));
 });
@@ -1392,7 +1669,12 @@ document.getElementById('closeYes')!.addEventListener('click', () => {
 // ── 백그라운드 ────────────────────────────────────────────────────────────────
 document.addEventListener('visibilitychange', () => { if (!document.hidden) lastT = 0; });
 
+// ── Canvas 컨텍스트 유실 대응 ─────────────────────────────────────────────────
+canvas.addEventListener('contextlost', (e) => e.preventDefault());
+canvas.addEventListener('contextrestored', () => { spriteCache.clear(); lastT = 0; });
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 applyColor();
 auto.reset();
+vinX = window.innerWidth / 2; vinY = window.innerHeight / 2;
 requestAnimationFrame(loop);
