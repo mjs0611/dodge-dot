@@ -1,3 +1,4 @@
+import { adSettler } from './adSettle';
 // ── AIT (리더보드 + 전면광고 + 리워드광고) ────────────────────────────────────
 const AIT_AD_GROUP_ID        = 'ait.v2.live.a66b039476b04755'; // 이어하기 (전면)
 const AIT_REWARD_AD_GROUP_ID = 'ait.v2.live.1f4e00858f124ea8'; // 코인 2배 (리워드)
@@ -1567,15 +1568,13 @@ async function preloadAd() {
 
 async function showAitAd(onComplete: () => void) {
   if (ait && aitAdLoaded) {
-    aitAdLoaded = false; let rewardEarned = false;
+    aitAdLoaded = false;
+    // 이어하기 = 전면 광고 그룹 → userEarnedReward 없음, 닫힘에서 완료
+    const settle = adSettler(false, onComplete, () => showAdFallback(onComplete), preloadAitAd);
     ait.showFullScreenAd({
       options: { adGroupId: AIT_AD_GROUP_ID },
-      onEvent: (event) => {
-        if      (event.type === 'userEarnedReward') rewardEarned = true;
-        else if (event.type === 'dismissed')        { if (rewardEarned) onComplete(); preloadAitAd(); }
-        else if (event.type === 'failedToShow')     showAdFallback(onComplete);
-      },
-      onError: () => showAdFallback(onComplete),
+      onEvent: (event) => settle(event.type),
+      onError: () => settle('error'),
     });
     return;
   }
@@ -1592,13 +1591,11 @@ async function showAitAd(onComplete: () => void) {
 async function showRewardAd(onComplete: () => void) {
   if (ait && aitRewardAdLoaded) {
     aitRewardAdLoaded = false;
+    const settle = adSettler(true, onComplete, () => showAdFallback(onComplete), preloadAitRewardAd);
     ait.showFullScreenAd({
       options: { adGroupId: AIT_REWARD_AD_GROUP_ID },
-      onEvent: (event) => {
-        if      (event.type === 'dismissed')    { onComplete(); preloadAitRewardAd(); }
-        else if (event.type === 'failedToShow') showAdFallback(onComplete);
-      },
-      onError: () => showAdFallback(onComplete),
+      onEvent: (event) => settle(event.type),
+      onError: () => settle('error'),
     });
     return;
   }
