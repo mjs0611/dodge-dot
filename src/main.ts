@@ -1089,6 +1089,9 @@ function drawFlyingCoins() {
 
 // ── Spawner ────────────────────────────────────────────────────────────────────
 let obsTimer = 0, introObsTimer = 0, specialTimer = 0, pickupTimer = 0, patternTimer = 0;
+// 픽업 간격은 스폰마다 한 번 뽑는다. 매 프레임 rand(5,10)를 다시 뽑으면 실제 평균이 약 5.3초로 쏠리고 프레임률에 따라 달라졌다. 기존 체감(평균 약 5.5초)을 유지하도록 5~6초.
+const nextPickupDelay = () => rand(5, 6);
+let pickupDue = nextPickupDelay();
 let nextSpecialInterval = rand(20, 30);
 
 function spawnTick(dt: number) {
@@ -1115,7 +1118,7 @@ function spawnTick(dt: number) {
     }
     // 코인 스테이지 중 일반 장애물/특수 스폰 중단
     pickupTimer += dt;
-    if (pickupTimer >= rand(5, 10)) { pickupTimer = 0; spawnPickup(); }
+    if (pickupTimer >= pickupDue) { pickupTimer = 0; pickupDue = nextPickupDelay(); spawnPickup(); }
     return;
   }
 
@@ -1145,7 +1148,7 @@ function spawnTick(dt: number) {
     }
   }
   pickupTimer += dt;
-  if (pickupTimer >= rand(5, 10)) { pickupTimer = 0; spawnPickup(); }
+  if (pickupTimer >= pickupDue) { pickupTimer = 0; pickupDue = nextPickupDelay(); spawnPickup(); }
 }
 
 // ── Pattern Spawner ────────────────────────────────────────────────────────────
@@ -1497,7 +1500,7 @@ let invincibleT = 0, hasContinued = false;
 function startGame() {
   obstacles = []; specials = []; pickups = []; particles = []; trailDots = []; posHistory = []; flyingCoins = []; shockRings = [];
   score = 0; scoreF = 0;
-  obsTimer = 0; specialTimer = 0; pickupTimer = 0; patternTimer = 0;
+  obsTimer = 0; specialTimer = 0; pickupTimer = 0; patternTimer = 0; pickupDue = nextPickupDelay();
   nextSpecialInterval = rand(8, 12);
   coinStageActive = false; coinStageT = 0; nextCoinStageIn = rand(20, 45); coinStageObsTimer = 0;
   hintAlpha = 1; gameTime = 0; nextWave = 15;
