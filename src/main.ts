@@ -1588,12 +1588,23 @@ async function showAitAd(onComplete: () => void) {
 async function showAdmobReward(onComplete: () => void) {
   if (!AdMobPlugin || !RewardEvents || !adLoaded) { showAdFallback(onComplete); return; }
   adLoaded = false; let rewardEarned = false;
+  // 요청당 1회 결산 + 리스너 해제 — 등록/표시 reject와 FailedToShow가 겹쳐도 폴백·보상은 한 번
+  let done = false;
+  const finish = (fn: () => void) => {
+    if (done) return;
+    done = true;
+    handles.then(hs => hs.forEach(h => h.remove())).catch(() => {});
+    preloadAd(); fn();
+  };
+  const handles = Promise.all([
+    AdMobPlugin.addListener(RewardEvents.Rewarded,     () => { rewardEarned = true; }),
+    AdMobPlugin.addListener(RewardEvents.Dismissed,    () => finish(() => { if (rewardEarned) onComplete(); })),
+    AdMobPlugin.addListener(RewardEvents.FailedToShow, () => finish(() => showAdFallback(onComplete))),
+  ]);
   try {
-    const rewarded  = await AdMobPlugin.addListener(RewardEvents.Rewarded,     () => { rewardEarned = true; });
-    const dismissed = await AdMobPlugin.addListener(RewardEvents.Dismissed,    () => { if (rewardEarned) onComplete(); preloadAd(); rewarded.remove(); dismissed.remove(); failed.remove(); });
-    const failed    = await AdMobPlugin.addListener(RewardEvents.FailedToShow, () => { showAdFallback(onComplete); preloadAd(); rewarded.remove(); dismissed.remove(); failed.remove(); });
+    await handles;
     await AdMobPlugin.showRewardVideoAd();
-  } catch { showAdFallback(onComplete); preloadAd(); }
+  } catch { finish(() => showAdFallback(onComplete)); }
 }
 
 async function showRewardAd(onComplete: () => void) {
