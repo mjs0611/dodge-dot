@@ -1581,14 +1581,19 @@ async function showAitAd(onComplete: () => void) {
     });
     return;
   }
+  await showAdmobReward(onComplete);
+}
+
+// 원스토어(AdMob) 리워드 — 이어하기·코인 2배 공용
+async function showAdmobReward(onComplete: () => void) {
   if (!AdMobPlugin || !RewardEvents || !adLoaded) { showAdFallback(onComplete); return; }
   adLoaded = false; let rewardEarned = false;
   try {
     const rewarded  = await AdMobPlugin.addListener(RewardEvents.Rewarded,     () => { rewardEarned = true; });
-    const dismissed = await AdMobPlugin.addListener(RewardEvents.Dismissed,    () => { if (rewardEarned) onComplete(); preloadAd(); rewarded.remove(); dismissed.remove(); });
-    const failed    = await AdMobPlugin.addListener(RewardEvents.FailedToShow, () => { showAdFallback(onComplete); rewarded.remove(); dismissed.remove(); failed.remove(); });
+    const dismissed = await AdMobPlugin.addListener(RewardEvents.Dismissed,    () => { if (rewardEarned) onComplete(); preloadAd(); rewarded.remove(); dismissed.remove(); failed.remove(); });
+    const failed    = await AdMobPlugin.addListener(RewardEvents.FailedToShow, () => { showAdFallback(onComplete); preloadAd(); rewarded.remove(); dismissed.remove(); failed.remove(); });
     await AdMobPlugin.showRewardVideoAd();
-  } catch (e) { showAdFallback(onComplete); }
+  } catch { showAdFallback(onComplete); preloadAd(); }
 }
 
 async function showRewardAd(onComplete: () => void) {
@@ -1602,7 +1607,7 @@ async function showRewardAd(onComplete: () => void) {
     });
     return;
   }
-  showAdFallback(onComplete);
+  await showAdmobReward(onComplete);
 }
 
 let adFallbackInterval: ReturnType<typeof setInterval> | null = null;
