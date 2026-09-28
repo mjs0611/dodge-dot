@@ -128,7 +128,9 @@ function updateShopUI() {
   SKINS.forEach((skin, idx) => {
     const isOwned    = ownedSkins.includes(skin.id);
     const isEquipped = equippedIdx === idx;
-    const div = document.createElement('div');
+    const div = document.createElement('button');
+    div.type = 'button';
+    div.setAttribute('aria-pressed', String(isEquipped));
     div.className = `sku-item ${isEquipped ? 'active' : ''} ${!isOwned ? 'locked' : ''}`;
 
     // 도트 미리보기: SVG 원

@@ -124,6 +124,7 @@ body { font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-ser
   display: flex; flex-direction: column; gap: 8px;
 }
 .sku-item {
+  width: 100%; background: #fff; color: inherit; font: inherit; text-align: left;
   position: relative;
   display: flex; align-items: center;
   padding: 16px;
